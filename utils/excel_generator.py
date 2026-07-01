@@ -105,7 +105,9 @@ def generate_excel_report(gap_analysis: GapAnalysisResult, scores: ContentScores
     return output.getvalue()
 
 def generate_master_excel_report(all_results: list) -> bytes:
-    master_data = []
+    full_data = []
+    short_data = []
+    action_data = []
     
     for item in all_results:
         url = item.get("url", "")
@@ -117,40 +119,95 @@ def generate_master_excel_report(all_results: list) -> bytes:
         if not r or not s or not g:
             continue
             
-        row = {
+        # --- 1. FULL ROW ---
+        row_full = {
             "URL": url,
             "Fraza": keyword,
             "CQS Score": r.cqs_score,
             "AI Citability": r.ai_citability_score,
             "Executive Summary": r.executive_summary,
-            "Missing TF-IDF": ", ".join(s.missing_tf_idf_terms)
+            "Missing TF-IDF": ", ".join(s.missing_tf_idf_terms) if s.missing_tf_idf_terms else ""
         }
         
         # Dimensions
         for dim in s.dimensions:
-            row[f"{dim.dimension_name} Score"] = dim.score
-            row[f"{dim.dimension_name} Problem"] = dim.top_problem
+            row_full[f"{dim.dimension_name} Score"] = dim.score
+            row_full[f"{dim.dimension_name} Problem"] = dim.top_problem
             
         # EEAT
         for eeat in s.eeat_signals:
-            row[f"EEAT {eeat.dimension} Score"] = eeat.score
-            row[f"EEAT {eeat.dimension} Missing"] = eeat.missing_signals
+            row_full[f"EEAT {eeat.dimension} Score"] = eeat.score
+            row_full[f"EEAT {eeat.dimension} Missing"] = eeat.missing_signals
             
         # Recommendations
         for i, rec in enumerate(r.recommendations):
-            row[f"Rec {i+1} Priority"] = rec.priority
-            row[f"Rec {i+1} Title"] = rec.title
-            row[f"Rec {i+1} Impact"] = f"+{rec.impact_cqs}"
-            row[f"Rec {i+1} BEFORE"] = rec.before_quote
-            row[f"Rec {i+1} AFTER"] = rec.after_generated
+            row_full[f"Rec {i+1} Priority"] = rec.priority
+            row_full[f"Rec {i+1} Title"] = rec.title
+            row_full[f"Rec {i+1} Impact"] = f"+{rec.impact_cqs}"
+            row_full[f"Rec {i+1} BEFORE"] = rec.before_quote
+            row_full[f"Rec {i+1} AFTER"] = rec.after_generated
             
-        master_data.append(row)
+        full_data.append(row_full)
         
-    df_master = pd.DataFrame(master_data)
+        # --- 2. SHORT ROW (Bez Ocen) ---
+        row_short = {
+            "URL": url,
+            "Fraza": keyword,
+            "CQS Score": r.cqs_score,
+            "AI Citability": r.ai_citability_score,
+            "Executive Summary": r.executive_summary,
+            "Missing TF-IDF": row_full["Missing TF-IDF"]
+        }
+        for i, rec in enumerate(r.recommendations):
+            row_short[f"Rec {i+1} Priority"] = rec.priority
+            row_short[f"Rec {i+1} Title"] = rec.title
+            row_short[f"Rec {i+1} Impact"] = f"+{rec.impact_cqs}"
+            row_short[f"Rec {i+1} BEFORE"] = rec.before_quote
+            row_short[f"Rec {i+1} AFTER"] = rec.after_generated
+            
+        short_data.append(row_short)
+        
+        # --- 3. ACTIONABLE ROW ---
+        crit = [f"[- {rec.title} -]\nZmień z:\n{rec.before_quote}\nNa:\n{rec.after_generated}" for rec in r.recommendations if rec.priority.upper() == "KRYTYCZNE"]
+        high = [f"[- {rec.title} -]\nZmień z:\n{rec.before_quote}\nNa:\n{rec.after_generated}" for rec in r.recommendations if rec.priority.upper() == "WYSOKIE"]
+        med  = [f"[- {rec.title} -]\nZmień z:\n{rec.before_quote}\nNa:\n{rec.after_generated}" for rec in r.recommendations if rec.priority.upper() == "ŚREDNIE"]
+        
+        h2s = r.target_structure_h2 if r.target_structure_h2 else []
+        blufs = r.bluf_per_h2 if r.bluf_per_h2 else []
+        structure = []
+        for i in range(max(len(h2s), len(blufs))):
+            h2 = h2s[i] if i < len(h2s) else ""
+            bluf = blufs[i] if i < len(blufs) else ""
+            structure.append(f"{h2}\nBLUF: {bluf}")
+            
+        eeat_miss = []
+        for e in s.eeat_signals:
+            if e.missing_signals and e.missing_signals.strip() != "":
+                eeat_miss.append(f"[{e.dimension}]: {e.missing_signals}")
+                
+        row_action = {
+            "URL": url,
+            "Fraza": keyword,
+            "CQS Score": r.cqs_score,
+            "KRYTYCZNE Rekomendacje": "\n\n".join(crit) if crit else "Brak",
+            "WYSOKIE Rekomendacje": "\n\n".join(high) if high else "Brak",
+            "ŚREDNIE Rekomendacje": "\n\n".join(med) if med else "Brak",
+            "Docelowa Struktura H2": "\n\n".join(structure) if structure else "Brak",
+            "Braki E-E-A-T": "\n".join(eeat_miss) if eeat_miss else "Brak",
+            "Brakujące Słowa (TF-IDF)": row_full["Missing TF-IDF"]
+        }
+        
+        action_data.append(row_action)
+        
+    df_full = pd.DataFrame(full_data)
+    df_short = pd.DataFrame(short_data)
+    df_action = pd.DataFrame(action_data)
     
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_master.to_excel(writer, sheet_name="Master Report", index=False)
+        df_action.to_excel(writer, sheet_name="Rekomendacje (Actionable)", index=False)
+        df_short.to_excel(writer, sheet_name="Skrócony (Bez Ocen)", index=False)
+        df_full.to_excel(writer, sheet_name="Pełny Raport", index=False)
     
     output.seek(0)
     return output.getvalue()
