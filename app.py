@@ -338,116 +338,52 @@ with tab2:
     if st.session_state.mass_step == 1:
         df = st.session_state.mass_df
             
-            if mass_manual_review:
-                idx = st.session_state.mass_idx
-                if idx >= len(df):
-                    st.success("Zakończono audyt masowy wszystkich adresów!")
-                    st.session_state.mass_zip = create_zip_archive(st.session_state.mass_files)
-                    st.session_state.mass_master = generate_master_excel_report(st.session_state.mass_results)
-                    st.session_state.mass_step = 2
+        if mass_manual_review:
+            idx = st.session_state.mass_idx
+            if idx >= len(df):
+                st.success("Zakończono audyt masowy wszystkich adresów!")
+                st.session_state.mass_zip = create_zip_archive(st.session_state.mass_files)
+                st.session_state.mass_master = generate_master_excel_report(st.session_state.mass_results)
+                st.session_state.mass_step = 2
+                st.rerun()
+            else:
+                row = df.iloc[idx]
+                url = str(row.get("URL", ""))
+                keyword = str(row.get("Fraza", ""))
+                
+                if pd.isna(url) or url.strip() == "":
+                    st.session_state.mass_idx += 1
                     st.rerun()
-                else:
-                    row = df.iloc[idx]
-                    url = str(row.get("URL", ""))
-                    keyword = str(row.get("Fraza", ""))
                     
-                    if pd.isna(url) or url.strip() == "":
-                        st.session_state.mass_idx += 1
-                        st.rerun()
-                        
-                    st.write(f"### Przetwarzanie wiersza {idx+1}/{len(df)}: {url}")
+                st.write(f"### Przetwarzanie wiersza {idx+1}/{len(df)}: {url}")
+                
+                if st.session_state.mass_jina_content is None:
+                    with st.spinner("Pobieranie JINA..."):
+                        source_data = fetch_url(url, remove_selector=jina_remove_selectors)
+                        if source_data:
+                            st.session_state.mass_jina_content = source_data.get("data", {}).get("content", "")
+                        else:
+                            st.error(f"Nie udało się pobrać treści dla {url}. Pomijam.")
+                            st.session_state.mass_idx += 1
+                            st.rerun()
+                
+                with st.expander(f"Pobrana treść JINA ({url})", expanded=True):
+                    st.markdown(st.session_state.mass_jina_content)
                     
-                    if st.session_state.mass_jina_content is None:
-                        with st.spinner("Pobieranie JINA..."):
-                            source_data = fetch_url(url, remove_selector=jina_remove_selectors)
-                            if source_data:
-                                st.session_state.mass_jina_content = source_data.get("data", {}).get("content", "")
-                            else:
-                                st.error(f"Nie udało się pobrać treści dla {url}. Pomijam.")
-                                st.session_state.mass_idx += 1
-                                st.rerun()
-                    
-                    with st.expander(f"Pobrana treść JINA ({url})", expanded=True):
-                        st.markdown(st.session_state.mass_jina_content)
-                        
-                    c1, c2 = st.columns(2)
-                    if c1.button("Zatwierdź i analizuj ten adres", key=f"btn_ok_{idx}"):
-                        pass # proceed
-                    elif c2.button("Pomiń ten adres", key=f"btn_skip_{idx}"):
-                        st.session_state.mass_jina_content = None
-                        st.session_state.mass_idx += 1
-                        st.rerun()
-                    else:
-                        st.stop() # Wait for interaction
-                    
-                    with st.spinner("Analiza w toku (SERP, Gap, Scoring, Report)..."):
-                        try:
-                            total_in, total_out = 0, 0
-                            source_content = st.session_state.mass_jina_content
-                            consolidated_competitors = ""
-                            
-                            if keyword and keyword.strip() != "":
-                                serp_data = search(keyword, hl=mass_hl, gl=mass_gl)
-                                competitor_urls = serp_data.get("urls", []) if not "error" in serp_data else []
-                                batch_result = fetch_competitors_batch(competitor_urls, remove_selector=jina_remove_selectors)
-                                consolidated_competitors = batch_result["consolidated_markdown"]
-                                
-                            if not consolidated_competitors:
-                                from utils.openai_llm import GapAnalysisResult
-                                gap_analysis = GapAnalysisResult(eav_matrix=[], top_3_gaps_p1=[], root_attributes=[], unique_opportunities=[])
-                            else:
-                                gap_analysis, u = analyze_competitor_gaps(keyword, consolidated_competitors, selected_model, prompt_gap_analysis, mass_lang_input, mass_user_context)
-                                total_in += u.prompt_tokens; total_out += u.completion_tokens
-                                
-                            scores, u = score_content(source_content, gap_analysis, selected_model, prompt_scoring, mass_lang_input, mass_user_context)
-                            total_in += u.prompt_tokens; total_out += u.completion_tokens
-                            
-                            report, u = generate_audit_report(source_content, gap_analysis, scores, selected_model, prompt_report, mass_lang_input, mass_user_context)
-                            total_in += u.prompt_tokens; total_out += u.completion_tokens
-                            
-                            excel_bytes = generate_excel_report(gap_analysis, scores, report, source_content, consolidated_competitors)
-                            filename = f"audit_{idx+1}_{url.split('//')[-1].split('/')[0]}.xlsx".replace("www.", "")
-                            
-                            st.session_state.mass_files[filename] = excel_bytes
-                            st.session_state.mass_results.append({
-                                "url": url,
-                                "keyword": keyword,
-                                "report": report,
-                                "scores": scores,
-                                "gap_analysis": gap_analysis
-                            })
-                            
-                            st.session_state.total_tokens["in"] += total_in
-                            st.session_state.total_tokens["out"] += total_out
-                            st.session_state.total_cost += (total_in / 1_000_000) * p_cost["in"] + (total_out / 1_000_000) * p_cost["out"]
-                            
-                        except Exception as e:
-                            st.error(f"Błąd przy analizie {url}: {e}")
-                    
+                c1, c2 = st.columns(2)
+                if c1.button("Zatwierdź i analizuj ten adres", key=f"btn_ok_{idx}"):
+                    pass # proceed
+                elif c2.button("Pomiń ten adres", key=f"btn_skip_{idx}"):
                     st.session_state.mass_jina_content = None
                     st.session_state.mass_idx += 1
                     st.rerun()
-            else:
-                # Automatyczny tryb masowy (bez zatrzymywania)
-                mass_prog = st.progress(0)
-                mass_status = st.empty()
+                else:
+                    st.stop() # Wait for interaction
                 
-                for idx, row in df.iterrows():
-                    url = str(row.get("URL", ""))
-                    keyword = str(row.get("Fraza", ""))
-                    
-                    if pd.isna(url) or url.strip() == "":
-                        continue
-                        
-                    mass_status.write(f"Analiza wiersza {idx+1}/{len(df)}: {url}")
-                    
+                with st.spinner("Analiza w toku (SERP, Gap, Scoring, Report)..."):
                     try:
-                        source_data = fetch_url(url, remove_selector=jina_remove_selectors)
-                        if not source_data:
-                            continue
-                        source_content = source_data.get("data", {}).get("content", "")
-                        
                         total_in, total_out = 0, 0
+                        source_content = st.session_state.mass_jina_content
                         consolidated_competitors = ""
                         
                         if keyword and keyword.strip() != "":
@@ -487,14 +423,78 @@ with tab2:
                         
                     except Exception as e:
                         st.error(f"Błąd przy analizie {url}: {e}")
-                        
-                    mass_prog.progress(int(((idx+1) / len(df)) * 100))
-                    
-                st.success("Zakończono audyt masowy wszystkich adresów!")
-                st.session_state.mass_zip = create_zip_archive(st.session_state.mass_files)
-                st.session_state.mass_master = generate_master_excel_report(st.session_state.mass_results)
-                st.session_state.mass_step = 2
+                
+                st.session_state.mass_jina_content = None
+                st.session_state.mass_idx += 1
                 st.rerun()
+        else:
+            # Automatyczny tryb masowy (bez zatrzymywania)
+            mass_prog = st.progress(0)
+            mass_status = st.empty()
+            
+            for idx, row in df.iterrows():
+                url = str(row.get("URL", ""))
+                keyword = str(row.get("Fraza", ""))
+                
+                if pd.isna(url) or url.strip() == "":
+                    continue
+                    
+                mass_status.write(f"Analiza wiersza {idx+1}/{len(df)}: {url}")
+                
+                try:
+                    source_data = fetch_url(url, remove_selector=jina_remove_selectors)
+                    if not source_data:
+                        continue
+                    source_content = source_data.get("data", {}).get("content", "")
+                    
+                    total_in, total_out = 0, 0
+                    consolidated_competitors = ""
+                    
+                    if keyword and keyword.strip() != "":
+                        serp_data = search(keyword, hl=mass_hl, gl=mass_gl)
+                        competitor_urls = serp_data.get("urls", []) if not "error" in serp_data else []
+                        batch_result = fetch_competitors_batch(competitor_urls, remove_selector=jina_remove_selectors)
+                        consolidated_competitors = batch_result["consolidated_markdown"]
+                        
+                    if not consolidated_competitors:
+                        from utils.openai_llm import GapAnalysisResult
+                        gap_analysis = GapAnalysisResult(eav_matrix=[], top_3_gaps_p1=[], root_attributes=[], unique_opportunities=[])
+                    else:
+                        gap_analysis, u = analyze_competitor_gaps(keyword, consolidated_competitors, selected_model, prompt_gap_analysis, mass_lang_input, mass_user_context)
+                        total_in += u.prompt_tokens; total_out += u.completion_tokens
+                        
+                    scores, u = score_content(source_content, gap_analysis, selected_model, prompt_scoring, mass_lang_input, mass_user_context)
+                    total_in += u.prompt_tokens; total_out += u.completion_tokens
+                    
+                    report, u = generate_audit_report(source_content, gap_analysis, scores, selected_model, prompt_report, mass_lang_input, mass_user_context)
+                    total_in += u.prompt_tokens; total_out += u.completion_tokens
+                    
+                    excel_bytes = generate_excel_report(gap_analysis, scores, report, source_content, consolidated_competitors)
+                    filename = f"audit_{idx+1}_{url.split('//')[-1].split('/')[0]}.xlsx".replace("www.", "")
+                    
+                    st.session_state.mass_files[filename] = excel_bytes
+                    st.session_state.mass_results.append({
+                        "url": url,
+                        "keyword": keyword,
+                        "report": report,
+                        "scores": scores,
+                        "gap_analysis": gap_analysis
+                    })
+                    
+                    st.session_state.total_tokens["in"] += total_in
+                    st.session_state.total_tokens["out"] += total_out
+                    st.session_state.total_cost += (total_in / 1_000_000) * p_cost["in"] + (total_out / 1_000_000) * p_cost["out"]
+                    
+                except Exception as e:
+                    st.error(f"Błąd przy analizie {url}: {e}")
+                    
+                mass_prog.progress(int(((idx+1) / len(df)) * 100))
+                
+            st.success("Zakończono audyt masowy wszystkich adresów!")
+            st.session_state.mass_zip = create_zip_archive(st.session_state.mass_files)
+            st.session_state.mass_master = generate_master_excel_report(st.session_state.mass_results)
+            st.session_state.mass_step = 2
+            st.rerun()
 
         if st.session_state.mass_step == 2:
             st.success("Proces masowy zakończony.")
