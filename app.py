@@ -335,6 +335,26 @@ with tab2:
                 st.session_state.mass_jina_content = None
                 st.rerun()
 
+    if st.session_state.mass_results:
+        st.success(f"Ukończono {len(st.session_state.mass_results)} analiz. Możesz pobrać dotychczasowe wyniki w każdej chwili.")
+        c_zip, c_master, c_reset = st.columns(3)
+        with c_zip:
+            if st.session_state.mass_zip:
+                st.download_button("Pobierz paczkę ZIP (wszystkie zrobione)", data=st.session_state.mass_zip, file_name="audyty_masowe.zip", mime="application/zip", use_container_width=True)
+        with c_master:
+            if st.session_state.mass_master:
+                st.download_button("Pobierz Master Excel (zbiorczy)", data=st.session_state.mass_master, file_name="master_report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        with c_reset:
+            if st.button("Zresetuj analizę masową", use_container_width=True):
+                st.session_state.mass_step = 0
+                st.session_state.mass_results = []
+                st.session_state.mass_files = {}
+                st.session_state.mass_zip = None
+                st.session_state.mass_master = None
+                st.session_state.mass_idx = 0
+                st.rerun()
+        st.divider()
+
     if st.session_state.mass_step == 1:
         df = st.session_state.mass_df
             
@@ -342,8 +362,6 @@ with tab2:
             idx = st.session_state.mass_idx
             if idx >= len(df):
                 st.success("Zakończono audyt masowy wszystkich adresów!")
-                st.session_state.mass_zip = create_zip_archive(st.session_state.mass_files)
-                st.session_state.mass_master = generate_master_excel_report(st.session_state.mass_results)
                 st.session_state.mass_step = 2
                 st.rerun()
             else:
@@ -421,6 +439,10 @@ with tab2:
                         st.session_state.total_tokens["out"] += total_out
                         st.session_state.total_cost += (total_in / 1_000_000) * p_cost["in"] + (total_out / 1_000_000) * p_cost["out"]
                         
+                        # Generate partial archives
+                        st.session_state.mass_zip = create_zip_archive(st.session_state.mass_files)
+                        st.session_state.mass_master = generate_master_excel_report(st.session_state.mass_results)
+                        
                     except Exception as e:
                         st.error(f"Błąd przy analizie {url}: {e}")
                 
@@ -485,27 +507,21 @@ with tab2:
                     st.session_state.total_tokens["out"] += total_out
                     st.session_state.total_cost += (total_in / 1_000_000) * p_cost["in"] + (total_out / 1_000_000) * p_cost["out"]
                     
+                    # Generate partial archives
+                    st.session_state.mass_zip = create_zip_archive(st.session_state.mass_files)
+                    st.session_state.mass_master = generate_master_excel_report(st.session_state.mass_results)
+                    
                 except Exception as e:
                     st.error(f"Błąd przy analizie {url}: {e}")
                     
                 mass_prog.progress(int(((idx+1) / len(df)) * 100))
                 
             st.success("Zakończono audyt masowy wszystkich adresów!")
-            st.session_state.mass_zip = create_zip_archive(st.session_state.mass_files)
-            st.session_state.mass_master = generate_master_excel_report(st.session_state.mass_results)
             st.session_state.mass_step = 2
             st.rerun()
 
         if st.session_state.mass_step == 2:
-            st.success("Proces masowy zakończony.")
             st.metric("Łączny Koszt", f"${st.session_state.total_cost:.4f}", f"{st.session_state.total_tokens['in']} in / {st.session_state.total_tokens['out']} out")
-            
-            c1, c2 = st.columns(2)
-            with c1:
-                st.download_button("Pobierz paczkę ZIP (wszystkie analizy osobno)", data=st.session_state.mass_zip, file_name="audyty_masowe.zip", mime="application/zip", type="primary")
-            with c2:
-                st.download_button("Pobierz Master Excel (zbiorczy raport)", data=st.session_state.mass_master, file_name="master_report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
-            
             if st.button("Zresetuj i rozpocznij od nowa"):
                 st.session_state.mass_step = 0
                 st.session_state.mass_df = None
