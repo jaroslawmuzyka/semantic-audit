@@ -1,5 +1,6 @@
 import pandas as pd
 import io
+import zipfile
 from utils.openai_llm import GapAnalysisResult, ContentScores, AuditReport
 
 def generate_excel_report(gap_analysis: GapAnalysisResult, scores: ContentScores, report: AuditReport, source_content: str, consolidated_competitors: str) -> bytes:
@@ -100,5 +101,64 @@ def generate_excel_report(gap_analysis: GapAnalysisResult, scores: ContentScores
         df_comps = pd.DataFrame({"Consolidated Competitors Content": [consolidated_competitors]})
         df_comps.to_excel(writer, sheet_name="Raw Competitors Content", index=False)
         
+    output.seek(0)
+    return output.getvalue()
+
+def generate_master_excel_report(all_results: list) -> bytes:
+    master_data = []
+    
+    for item in all_results:
+        url = item.get("url", "")
+        keyword = item.get("keyword", "")
+        r = item.get("report")
+        s = item.get("scores")
+        g = item.get("gap_analysis")
+        
+        if not r or not s or not g:
+            continue
+            
+        row = {
+            "URL": url,
+            "Fraza": keyword,
+            "CQS Score": r.cqs_score,
+            "AI Citability": r.ai_citability_score,
+            "Executive Summary": r.executive_summary,
+            "Missing TF-IDF": ", ".join(s.missing_tf_idf_terms)
+        }
+        
+        # Dimensions
+        for dim in s.dimensions:
+            row[f"{dim.dimension_name} Score"] = dim.score
+            row[f"{dim.dimension_name} Problem"] = dim.top_problem
+            
+        # EEAT
+        for eeat in s.eeat_signals:
+            row[f"EEAT {eeat.dimension} Score"] = eeat.score
+            row[f"EEAT {eeat.dimension} Missing"] = eeat.missing_signals
+            
+        # Recommendations
+        for i, rec in enumerate(r.recommendations):
+            row[f"Rec {i+1} Priority"] = rec.priority
+            row[f"Rec {i+1} Title"] = rec.title
+            row[f"Rec {i+1} Impact"] = f"+{rec.impact_cqs}"
+            row[f"Rec {i+1} BEFORE"] = rec.before_quote
+            row[f"Rec {i+1} AFTER"] = rec.after_generated
+            
+        master_data.append(row)
+        
+    df_master = pd.DataFrame(master_data)
+    
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_master.to_excel(writer, sheet_name="Master Report", index=False)
+    
+    output.seek(0)
+    return output.getvalue()
+
+def create_zip_archive(files_dict: dict) -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for filename, filebytes in files_dict.items():
+            zf.writestr(filename, filebytes)
     output.seek(0)
     return output.getvalue()

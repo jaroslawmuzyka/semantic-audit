@@ -74,7 +74,7 @@ class AuditReport(BaseModel):
     bluf_per_h2: List[str] # Bottom Line Up Front suggested first sentences
     eeat_ready_blocks: str # Bio, disclaimer, etc
 
-def analyze_competitor_gaps(topic, consolidated_competitors, model_name, system_prompt) -> GapAnalysisResult:
+def analyze_competitor_gaps(topic, consolidated_competitors, model_name, system_prompt, language, user_context="") -> tuple:
     client = get_openai_client()
     prompt = f"""
     Analyze the top 10 competitors for the topic: "{topic}".
@@ -86,17 +86,21 @@ def analyze_competitor_gaps(topic, consolidated_competitors, model_name, system_
     {consolidated_competitors}
     """
     
+    full_system = system_prompt + f"\n\nIMPORTANT: All outputs and generated content MUST be in {language} language. Respond exclusively in {language}."
+    if user_context:
+        full_system += f"\n\nDODATKOWY KONTEKST UŻYTKOWNIKA (obowiązkowo uwzględnij): {user_context}"
+        
     response = client.beta.chat.completions.parse(
         model=model_name,
         messages=[
-            {"role": "system", "content": system_prompt + "\n\nWażne: Wszystkie odpowiedzi i wygenerowane treści muszą być w języku polskim. Odpowiadaj wyłącznie po polsku."},
+            {"role": "system", "content": full_system},
             {"role": "user", "content": prompt}
         ],
         response_format=GapAnalysisResult
     )
-    return response.choices[0].message.parsed
+    return response.choices[0].message.parsed, response.usage
 
-def score_content(source_article, gap_analysis_result: GapAnalysisResult, model_name, system_prompt) -> ContentScores:
+def score_content(source_article, gap_analysis_result: GapAnalysisResult, model_name, system_prompt, language, user_context="") -> tuple:
     client = get_openai_client()
     prompt = f"""
     Analyze the following source article against the competitor gap analysis.
@@ -110,17 +114,21 @@ def score_content(source_article, gap_analysis_result: GapAnalysisResult, model_
     {source_article}
     """
     
+    full_system = system_prompt + f"\n\nIMPORTANT: All outputs and generated content MUST be in {language} language. Respond exclusively in {language}."
+    if user_context:
+        full_system += f"\n\nDODATKOWY KONTEKST UŻYTKOWNIKA (obowiązkowo uwzględnij): {user_context}"
+        
     response = client.beta.chat.completions.parse(
         model=model_name,
         messages=[
-            {"role": "system", "content": system_prompt + "\n\nWażne: Wszystkie odpowiedzi i wygenerowane treści muszą być w języku polskim. Odpowiadaj wyłącznie po polsku."},
+            {"role": "system", "content": full_system},
             {"role": "user", "content": prompt}
         ],
         response_format=ContentScores
     )
-    return response.choices[0].message.parsed
+    return response.choices[0].message.parsed, response.usage
 
-def generate_audit_report(source_article, gap_analysis: GapAnalysisResult, scores: ContentScores, model_name, system_prompt) -> AuditReport:
+def generate_audit_report(source_article, gap_analysis: GapAnalysisResult, scores: ContentScores, model_name, system_prompt, language, user_context="") -> tuple:
     client = get_openai_client()
     prompt = f"""
     Generate a final actionable audit report.
@@ -138,12 +146,33 @@ def generate_audit_report(source_article, gap_analysis: GapAnalysisResult, score
     {source_article}
     """
     
+    full_system = system_prompt + f"\n\nIMPORTANT: All outputs and generated content MUST be in {language} language. Respond exclusively in {language}."
+    if user_context:
+        full_system += f"\n\nDODATKOWY KONTEKST UŻYTKOWNIKA (obowiązkowo uwzględnij): {user_context}"
+        
     response = client.beta.chat.completions.parse(
         model=model_name,
         messages=[
-            {"role": "system", "content": system_prompt + "\n\nWażne: Wszystkie odpowiedzi i wygenerowane treści muszą być w języku polskim. Odpowiadaj wyłącznie po polsku."},
+            {"role": "system", "content": full_system},
             {"role": "user", "content": prompt}
         ],
         response_format=AuditReport
     )
-    return response.choices[0].message.parsed
+    return response.choices[0].message.parsed, response.usage
+
+class KeywordResult(BaseModel):
+    keyword: str
+
+def generate_keyword_from_url(url: str, title: str, model_name: str) -> tuple:
+    client = get_openai_client()
+    prompt = f"URL: {url}\nTitle: {title if title else 'Brak'}\n\nWygeneruj najlepszą, naturalną główną frazę kluczową (keyword) dla tego artykułu. Maksymalnie 3-4 słowa. Odpowiedz wyłącznie w języku polskim."
+    
+    response = client.beta.chat.completions.parse(
+        model=model_name,
+        messages=[
+            {"role": "system", "content": "Jesteś ekspertem SEO. Twoim zadaniem jest wyciągnięcie głównej frazy kluczowej na podstawie struktury URL i tagu Title."},
+            {"role": "user", "content": prompt}
+        ],
+        response_format=KeywordResult
+    )
+    return response.choices[0].message.parsed.keyword, response.usage
