@@ -1,0 +1,14 @@
+# Katalog ze starą wersją systemu (nieużywany przez aplikację Streamlit)
+semantic-os/
+
+# Pliki konfiguracyjne zawierające wrażliwe klucze API
+.streamlit/secrets.toml
+
+# Środowisko wirtualne (jeśli utworzysz)
+venv/
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
