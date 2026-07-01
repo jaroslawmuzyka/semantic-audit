@@ -2,7 +2,7 @@ import pandas as pd
 import io
 from utils.openai_llm import GapAnalysisResult, ContentScores, AuditReport
 
-def generate_excel_report(gap_analysis: GapAnalysisResult, scores: ContentScores, report: AuditReport) -> bytes:
+def generate_excel_report(gap_analysis: GapAnalysisResult, scores: ContentScores, report: AuditReport, source_content: str, consolidated_competitors: str) -> bytes:
     output = io.BytesIO()
     
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -31,13 +31,22 @@ def generate_excel_report(gap_analysis: GapAnalysisResult, scores: ContentScores
         # Sheet 3: Competitor EAV Matrix
         eav_data = []
         for e in gap_analysis.eav_matrix:
-            eav_data.append({
+            row = {
                 "Attribute": e.attribute,
                 "URR Type": e.urr_type,
                 "Coverage": e.coverage,
                 "Priority": e.priority,
                 "Status": e.status
-            })
+            }
+            # Add K1-K10 columns
+            for i in range(10):
+                col_name = f"K{i+1}"
+                if i < len(e.competitors_presence):
+                    row[col_name] = "+" if e.competitors_presence[i] else "-"
+                else:
+                    row[col_name] = "Brak danych"
+            eav_data.append(row)
+            
         df_eav = pd.DataFrame(eav_data)
         df_eav.to_excel(writer, sheet_name="Competitor EAV Matrix", index=False)
         
@@ -82,6 +91,14 @@ def generate_excel_report(gap_analysis: GapAnalysisResult, scores: ContentScores
         tfidf_data = {"Missing Terms": scores.missing_tf_idf_terms}
         df_tfidf = pd.DataFrame(tfidf_data)
         df_tfidf.to_excel(writer, sheet_name="Missing TF-IDF", index=False)
+        
+        # Sheet 8: Raw Source Content
+        df_source = pd.DataFrame({"Source Article Content": [source_content]})
+        df_source.to_excel(writer, sheet_name="Raw Source Content", index=False)
+        
+        # Sheet 9: Raw Competitors Content
+        df_comps = pd.DataFrame({"Consolidated Competitors Content": [consolidated_competitors]})
+        df_comps.to_excel(writer, sheet_name="Raw Competitors Content", index=False)
         
     output.seek(0)
     return output.getvalue()

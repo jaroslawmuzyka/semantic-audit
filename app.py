@@ -15,8 +15,8 @@ if "excel_bytes" not in st.session_state:
     st.session_state.excel_bytes = None
 if "report" not in st.session_state:
     st.session_state.report = None
-if "logs" not in st.session_state:
-    st.session_state.logs = []
+if "intermediate_logs" not in st.session_state:
+    st.session_state.intermediate_logs = {}
 
 st.title("📝 AI Content Auditor Pipeline")
 st.markdown("Audyt semantyczny treści za pomocą Jina, Nodeshub i OpenAI.")
@@ -70,7 +70,7 @@ if st.button("Rozpocznij Audyt", type="primary"):
     st.session_state.audit_completed = False
     st.session_state.excel_bytes = None
     st.session_state.report = None
-    st.session_state.logs = []
+    st.session_state.intermediate_logs = {}
 
     progress_bar = st.progress(0)
     
@@ -164,7 +164,7 @@ if st.button("Rozpocznij Audyt", type="primary"):
 
         # Step 7: Excel Export
         with st.status("Krok 7: Generowanie pliku XLSX...", expanded=True) as status:
-            excel_bytes = generate_excel_report(gap_analysis, scores, report)
+            excel_bytes = generate_excel_report(gap_analysis, scores, report, source_content, consolidated_competitors)
             status.update(label="Krok 7: XLSX gotowy.", state="complete", expanded=False)
             
         progress_bar.progress(100)
@@ -174,6 +174,13 @@ if st.button("Rozpocznij Audyt", type="primary"):
         st.session_state.audit_completed = True
         st.session_state.excel_bytes = excel_bytes
         st.session_state.report = report
+        st.session_state.intermediate_logs = {
+            "source_content": source_content,
+            "competitor_urls": competitor_urls if keyword_input else [],
+            "consolidated_competitors": consolidated_competitors,
+            "gap_analysis": gap_analysis.model_dump(),
+            "scores": scores.model_dump()
+        }
 
     except Exception as e:
         st.error(f"Wystąpił błąd podczas analizy: {e}")
@@ -208,3 +215,22 @@ if st.session_state.audit_completed and st.session_state.report is not None:
             st.text(f"BEFORE:\n{rec.before_quote}")
             st.text(f"AFTER:\n{rec.after_generated}")
             st.divider()
+            
+    st.divider()
+    st.subheader("🛠️ Logi i Wyniki Pośrednie")
+    logs = st.session_state.intermediate_logs
+    
+    with st.expander("Podgląd pobranej treści artykułu (JINA)"):
+        st.markdown(logs.get("source_content", ""))
+        
+    with st.expander("Podgląd adresów konkurencji (SERP)"):
+        st.json(logs.get("competitor_urls", []))
+        
+    with st.expander("Podgląd połączonej treści konkurentów"):
+        st.markdown(logs.get("consolidated_competitors", ""))
+        
+    with st.expander("Podgląd surowego wyniku EAV (OpenAI)"):
+        st.json(logs.get("gap_analysis", {}))
+        
+    with st.expander("Podgląd surowych punktacji (OpenAI)"):
+        st.json(logs.get("scores", {}))

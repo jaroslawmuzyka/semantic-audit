@@ -17,6 +17,7 @@ class EAVEntry(BaseModel):
     attribute: str
     urr_type: str # UNIQUE, ROOT, RARE
     coverage: str # e.g. "8/10"
+    competitors_presence: List[bool] # True if competitor has it, False otherwise (index 0 is K1, index 1 is K2...)
     priority: str # P1, P2, P3, P4
     status: str # COVERED, GAP, UNIQUE
 
