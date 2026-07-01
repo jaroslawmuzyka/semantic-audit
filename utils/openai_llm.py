@@ -73,7 +73,7 @@ class AuditReport(BaseModel):
     bluf_per_h2: List[str] # Bottom Line Up Front suggested first sentences
     eeat_ready_blocks: str # Bio, disclaimer, etc
 
-def analyze_competitor_gaps(topic, consolidated_competitors) -> GapAnalysisResult:
+def analyze_competitor_gaps(topic, consolidated_competitors, model_name, system_prompt) -> GapAnalysisResult:
     client = get_openai_client()
     prompt = f"""
     Analyze the top 10 competitors for the topic: "{topic}".
@@ -86,16 +86,16 @@ def analyze_competitor_gaps(topic, consolidated_competitors) -> GapAnalysisResul
     """
     
     response = client.beta.chat.completions.parse(
-        model="gpt-4o",
+        model=model_name,
         messages=[
-            {"role": "system", "content": "You are an expert SEO and AI Search Content Auditor."},
+            {"role": "system", "content": system_prompt + "\n\nWażne: Wszystkie odpowiedzi i wygenerowane treści muszą być w języku polskim. Odpowiadaj wyłącznie po polsku."},
             {"role": "user", "content": prompt}
         ],
         response_format=GapAnalysisResult
     )
     return response.choices[0].message.parsed
 
-def score_content(source_article, gap_analysis_result: GapAnalysisResult) -> ContentScores:
+def score_content(source_article, gap_analysis_result: GapAnalysisResult, model_name, system_prompt) -> ContentScores:
     client = get_openai_client()
     prompt = f"""
     Analyze the following source article against the competitor gap analysis.
@@ -110,16 +110,16 @@ def score_content(source_article, gap_analysis_result: GapAnalysisResult) -> Con
     """
     
     response = client.beta.chat.completions.parse(
-        model="gpt-4o",
+        model=model_name,
         messages=[
-            {"role": "system", "content": "You are a stringent content auditor."},
+            {"role": "system", "content": system_prompt + "\n\nWażne: Wszystkie odpowiedzi i wygenerowane treści muszą być w języku polskim. Odpowiadaj wyłącznie po polsku."},
             {"role": "user", "content": prompt}
         ],
         response_format=ContentScores
     )
     return response.choices[0].message.parsed
 
-def generate_audit_report(source_article, gap_analysis: GapAnalysisResult, scores: ContentScores) -> AuditReport:
+def generate_audit_report(source_article, gap_analysis: GapAnalysisResult, scores: ContentScores, model_name, system_prompt) -> AuditReport:
     client = get_openai_client()
     prompt = f"""
     Generate a final actionable audit report.
@@ -138,9 +138,9 @@ def generate_audit_report(source_article, gap_analysis: GapAnalysisResult, score
     """
     
     response = client.beta.chat.completions.parse(
-        model="gpt-4o",
+        model=model_name,
         messages=[
-            {"role": "system", "content": "You are a lead content strategist and auditor."},
+            {"role": "system", "content": system_prompt + "\n\nWażne: Wszystkie odpowiedzi i wygenerowane treści muszą być w języku polskim. Odpowiadaj wyłącznie po polsku."},
             {"role": "user", "content": prompt}
         ],
         response_format=AuditReport

@@ -8,17 +8,49 @@ from utils.excel_generator import generate_excel_report
 
 st.set_page_config(page_title="AI Content Auditor", page_icon="📝", layout="wide")
 
+# Initialize Session State
+if "audit_completed" not in st.session_state:
+    st.session_state.audit_completed = False
+if "excel_bytes" not in st.session_state:
+    st.session_state.excel_bytes = None
+if "report" not in st.session_state:
+    st.session_state.report = None
+if "logs" not in st.session_state:
+    st.session_state.logs = []
+
 st.title("📝 AI Content Auditor Pipeline")
 st.markdown("Audyt semantyczny treści za pomocą Jina, Nodeshub i OpenAI.")
 
+# Sidebar Settings
 with st.sidebar:
-    st.header("Konfiguracja")
+    st.header("Konfiguracja API")
     st.info("Klucze API powinny być skonfigurowane w `.streamlit/secrets.toml`.")
     st.markdown("""
     - **OpenAI API Key**
     - **Jina API Key**
     - **Nodeshub API Key**
     """)
+    
+    st.divider()
+    st.header("Ustawienia Zaawansowane")
+    selected_model = st.selectbox("Model OpenAI", ["gpt-4o", "chatgpt-4o-latest", "gpt-4-turbo", "gpt-4o-mini", "gpt-5.4-mini", "gpt-5-mini", "gpt-5.4-nano"], index=0)
+    
+    with st.expander("Edytuj Prompty Systemowe", expanded=False):
+        prompt_gap_analysis = st.text_area(
+            "Krok 4: Analiza luk i konkurentów", 
+            value="Jesteś ekspertem SEO i analitykiem AI Search. Twoim zadaniem jest dokładna analiza treści konkurencji, klasyfikacja atrybutów oraz znalezienie luk w kontekście tworzenia nowego, wysoce zoptymalizowanego artykułu.",
+            height=150
+        )
+        prompt_scoring = st.text_area(
+            "Krok 5: Ocena wymiarów (Scoring)", 
+            value="Jesteś rygorystycznym audytorem treści specjalizującym się w E-E-A-T, Information Density i semantyce. Oceniasz tekst surowo i wyciągasz cytaty sprawiające problemy.",
+            height=150
+        )
+        prompt_report = st.text_area(
+            "Krok 6: Raport i Rekomendacje", 
+            value="Jesteś głównym strategiem treści. Na podstawie surowych danych analitycznych budujesz profesjonalny plan działania, dajesz jasne wytyczne BEFORE/AFTER i precyzyjnie liczysz Content Quality Score (CQS).",
+            height=150
+        )
 
 # Input
 col1, col2 = st.columns(2)
@@ -31,24 +63,33 @@ if st.button("Rozpocznij Audyt", type="primary"):
     if not url_input:
         st.error("Proszę podać URL artykułu.")
         st.stop()
+        
+    # Reset state for new run
+    st.session_state.audit_completed = False
+    st.session_state.excel_bytes = None
+    st.session_state.report = None
+    st.session_state.logs = []
 
-    # Progress reporting
     progress_bar = st.progress(0)
-    status_text = st.empty()
-
+    
     try:
         # Step 1: Fetch source content
-        status_text.text("Krok 1: Pobieranie treści analizowanego artykułu (Jina)...")
-        source_data = fetch_url(url_input)
-        if not source_data:
-            st.error("Nie udało się pobrać treści artykułu.")
-            st.stop()
-        
-        source_title = source_data.get("data", {}).get("title", "")
-        source_content = source_data.get("data", {}).get("content", "")
-        
-        if len(source_content.split()) < 200:
-            st.warning("Uwaga: Artykuł wydaje się bardzo krótki (poniżej 200 słów).")
+        with st.status("Krok 1: Pobieranie treści analizowanego artykułu (Jina)...", expanded=True) as status:
+            source_data = fetch_url(url_input)
+            if not source_data:
+                st.error("Nie udało się pobrać treści artykułu.")
+                st.stop()
+            
+            source_title = source_data.get("data", {}).get("title", "")
+            source_content = source_data.get("data", {}).get("content", "")
+            
+            if len(source_content.split()) < 200:
+                st.warning("Uwaga: Artykuł wydaje się bardzo krótki (poniżej 200 słów).")
+            
+            with st.expander("Podgląd pobranej treści (JINA)"):
+                st.markdown(source_content)
+                
+            status.update(label="Krok 1: Zakończono pobieranie artykułu.", state="complete", expanded=False)
             
         progress_bar.progress(15)
 
@@ -56,76 +97,112 @@ if st.button("Rozpocznij Audyt", type="primary"):
         
         # Step 2 & 3: Competitor fetching
         if keyword_input:
-            status_text.text(f"Krok 2: Pobieranie wyników SERP dla '{keyword_input}' (Nodeshub)...")
-            serp_data = search(keyword_input)
-            
-            if "error" in serp_data:
-                st.error(f"Błąd Nodeshub: {serp_data['error']}")
-                st.stop()
+            with st.status(f"Krok 2: Pobieranie wyników SERP dla '{keyword_input}' (Nodeshub)...", expanded=True) as status:
+                serp_data = search(keyword_input)
                 
-            competitor_urls = serp_data.get("urls", [])
-            st.write(f"Znaleziono {len(competitor_urls)} organicznych wyników w Top 10.")
+                if "error" in serp_data:
+                    st.error(f"Błąd Nodeshub: {serp_data['error']}")
+                    st.stop()
+                    
+                competitor_urls = serp_data.get("urls", [])
+                st.write(f"Znaleziono {len(competitor_urls)} organicznych wyników w Top 10.")
+                
+                with st.expander("Podgląd adresów konkurencji (SERP)"):
+                    st.json(competitor_urls)
+                    
+                status.update(label="Krok 2: Wyniki SERP pobrane.", state="complete", expanded=False)
+                
             progress_bar.progress(30)
             
-            status_text.text("Krok 3: Pobieranie treści konkurentów (Jina Batch)...")
-            batch_result = fetch_competitors_batch(competitor_urls)
-            consolidated_competitors = batch_result["consolidated_markdown"]
-            st.write(f"Pomyślnie pobrano treść od {batch_result['ok_count']} konkurentów.")
+            with st.status("Krok 3: Pobieranie treści konkurentów (Jina Batch)...", expanded=True) as status:
+                batch_result = fetch_competitors_batch(competitor_urls)
+                consolidated_competitors = batch_result["consolidated_markdown"]
+                st.write(f"Pomyślnie pobrano treść od {batch_result['ok_count']} konkurentów.")
+                
+                with st.expander("Podgląd połączonej treści konkurentów"):
+                    st.markdown(consolidated_competitors)
+                
+                status.update(label="Krok 3: Treści konkurentów pobrane.", state="complete", expanded=False)
+                
             progress_bar.progress(45)
 
         # Step 4: Gap Analysis
-        status_text.text("Krok 4: Analiza luk i EAV konkurencji (OpenAI)...")
-        if not consolidated_competitors:
-            st.warning("Brak treści konkurentów. Pomijam analizę SERP (Tryb Content-only).")
-            # Create a dummy gap analysis for the content-only mode
-            from utils.openai_llm import GapAnalysisResult
-            gap_analysis = GapAnalysisResult(eav_matrix=[], top_3_gaps_p1=[], root_attributes=[], unique_opportunities=[])
-        else:
-            gap_analysis = analyze_competitor_gaps(keyword_input, consolidated_competitors)
+        with st.status("Krok 4: Analiza luk i EAV konkurencji (OpenAI)...", expanded=True) as status:
+            if not consolidated_competitors:
+                st.warning("Brak treści konkurentów. Pomijam analizę SERP (Tryb Content-only).")
+                from utils.openai_llm import GapAnalysisResult
+                gap_analysis = GapAnalysisResult(eav_matrix=[], top_3_gaps_p1=[], root_attributes=[], unique_opportunities=[])
+            else:
+                gap_analysis = analyze_competitor_gaps(keyword_input, consolidated_competitors, selected_model, prompt_gap_analysis)
+                
+            with st.expander("Podgląd wyniku analizy EAV"):
+                st.json(gap_analysis.model_dump())
+                
+            status.update(label="Krok 4: Analiza EAV zakończona.", state="complete", expanded=False)
+            
         progress_bar.progress(60)
 
         # Step 5: Scoring
-        status_text.text("Krok 5: Ocenianie wymiarów jakości (OpenAI)...")
-        scores = score_content(source_content, gap_analysis)
+        with st.status("Krok 5: Ocenianie wymiarów jakości (OpenAI)...", expanded=True) as status:
+            scores = score_content(source_content, gap_analysis, selected_model, prompt_scoring)
+            
+            with st.expander("Podgląd surowych punktacji"):
+                st.json(scores.model_dump())
+                
+            status.update(label="Krok 5: Ocenianie zakończone.", state="complete", expanded=False)
+            
         progress_bar.progress(75)
 
         # Step 6: Final Report
-        status_text.text("Krok 6: Generowanie ostatecznych rekomendacji i CQS (OpenAI)...")
-        report = generate_audit_report(source_content, gap_analysis, scores)
+        with st.status("Krok 6: Generowanie ostatecznych rekomendacji i CQS (OpenAI)...", expanded=True) as status:
+            report = generate_audit_report(source_content, gap_analysis, scores, selected_model, prompt_report)
+            status.update(label="Krok 6: Raport wygenerowany.", state="complete", expanded=False)
+            
         progress_bar.progress(90)
 
         # Step 7: Excel Export
-        status_text.text("Krok 7: Generowanie pliku XLSX...")
-        excel_bytes = generate_excel_report(gap_analysis, scores, report)
+        with st.status("Krok 7: Generowanie pliku XLSX...", expanded=True) as status:
+            excel_bytes = generate_excel_report(gap_analysis, scores, report)
+            status.update(label="Krok 7: XLSX gotowy.", state="complete", expanded=False)
+            
         progress_bar.progress(100)
-        status_text.text("Audyt zakończony sukcesem!")
+        st.success("Audyt zakończony sukcesem!")
 
-        # Display Results
-        st.success("Raport gotowy do pobrania!")
-        
-        col_cqs, col_ai = st.columns(2)
-        col_cqs.metric("Content Quality Score (CQS)", f"{report.cqs_score}/100")
-        col_ai.metric("AI Citability Score", f"{report.ai_citability_score}/10")
-        
-        st.subheader("Executive Summary")
-        st.write(report.executive_summary)
-        
-        st.download_button(
-            label="Pobierz pełny raport audytu (XLSX)",
-            data=excel_bytes,
-            file_name=f"audit_report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"
-        )
-        
-        with st.expander("Zobacz główne rekomendacje"):
-            for rec in report.recommendations:
-                st.markdown(f"**[{rec.priority}] {rec.title}** (Wpływ: +{rec.impact_cqs} pkt)")
-                st.markdown(f"*{rec.context}*")
-                st.text(f"BEFORE:\n{rec.before_quote}")
-                st.text(f"AFTER:\n{rec.after_generated}")
-                st.divider()
+        # Save to Session State so it persists
+        st.session_state.audit_completed = True
+        st.session_state.excel_bytes = excel_bytes
+        st.session_state.report = report
 
     except Exception as e:
         st.error(f"Wystąpił błąd podczas analizy: {e}")
-        status_text.text("Błąd.")
+
+# Display Results if audit is completed (persists across reruns)
+if st.session_state.audit_completed and st.session_state.report is not None:
+    report = st.session_state.report
+    excel_bytes = st.session_state.excel_bytes
+    
+    st.divider()
+    st.subheader("📊 Wyniki Audytu")
+    
+    col_cqs, col_ai = st.columns(2)
+    col_cqs.metric("Content Quality Score (CQS)", f"{report.cqs_score}/100")
+    col_ai.metric("AI Citability Score", f"{report.ai_citability_score}/10")
+    
+    st.markdown("### Executive Summary")
+    st.write(report.executive_summary)
+    
+    st.download_button(
+        label="Pobierz pełny raport audytu (XLSX)",
+        data=excel_bytes,
+        file_name="audit_report.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary"
+    )
+    
+    with st.expander("Zobacz główne rekomendacje", expanded=True):
+        for rec in report.recommendations:
+            st.markdown(f"**[{rec.priority}] {rec.title}** (Wpływ: +{rec.impact_cqs} pkt)")
+            st.markdown(f"*{rec.context}*")
+            st.text(f"BEFORE:\n{rec.before_quote}")
+            st.text(f"AFTER:\n{rec.after_generated}")
+            st.divider()
