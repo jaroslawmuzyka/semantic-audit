@@ -35,6 +35,8 @@ with st.sidebar:
     st.header("Ustawienia Zaawansowane")
     selected_model = st.selectbox("Model OpenAI", ["gpt-4o", "chatgpt-4o-latest", "gpt-4-turbo", "gpt-4o-mini", "gpt-5.4-mini", "gpt-5-mini", "gpt-5.4-nano"], index=0)
     
+    jina_remove_selectors = st.text_input("Wyklucz selektory w JINA (np. header, .class)", placeholder="header, .cky-consent-container, #footer")
+    
     with st.expander("Edytuj Prompty Systemowe", expanded=False):
         prompt_gap_analysis = st.text_area(
             "Krok 4: Analiza luk i konkurentów", 
@@ -75,7 +77,7 @@ if st.button("Rozpocznij Audyt", type="primary"):
     try:
         # Step 1: Fetch source content
         with st.status("Krok 1: Pobieranie treści analizowanego artykułu (Jina)...", expanded=True) as status:
-            source_data = fetch_url(url_input)
+            source_data = fetch_url(url_input, remove_selector=jina_remove_selectors)
             if not source_data:
                 st.error("Nie udało się pobrać treści artykułu.")
                 st.stop()
@@ -115,7 +117,7 @@ if st.button("Rozpocznij Audyt", type="primary"):
             progress_bar.progress(30)
             
             with st.status("Krok 3: Pobieranie treści konkurentów (Jina Batch)...", expanded=True) as status:
-                batch_result = fetch_competitors_batch(competitor_urls)
+                batch_result = fetch_competitors_batch(competitor_urls, remove_selector=jina_remove_selectors)
                 consolidated_competitors = batch_result["consolidated_markdown"]
                 st.write(f"Pomyślnie pobrano treść od {batch_result['ok_count']} konkurentów.")
                 

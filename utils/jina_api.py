@@ -98,11 +98,14 @@ def truncate_content(content, max_words=1500):
         return content
     return ' '.join(words[:max_words]) + '\n\n[... treść skrócona do 1500 słów ...]'
 
-def fetch_url(url, max_retries=3):
+def fetch_url(url, max_retries=3, remove_selector=None):
     headers = {
         "Accept": "application/json",
         "X-Return-Format": "markdown",
     }
+    if remove_selector:
+        headers["X-Remove-Selector"] = remove_selector
+    
     api_key = get_api_key()
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -126,8 +129,8 @@ def fetch_url(url, max_retries=3):
                 return None
     return None
 
-def process_single_url(url, clean=True):
-    data = fetch_url(url)
+def process_single_url(url, clean=True, remove_selector=None):
+    data = fetch_url(url, remove_selector=remove_selector)
     if not data:
         return {"url": url, "status": "ERROR", "content": None, "title": None, "word_count": 0}
         
@@ -148,11 +151,11 @@ def process_single_url(url, clean=True):
         "status": status
     }
 
-def fetch_competitors_batch(urls, max_words_per_competitor=1500, max_workers=5):
+def fetch_competitors_batch(urls, max_words_per_competitor=1500, max_workers=5, remove_selector=None):
     results = []
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(process_single_url, url, True): url for url in urls}
+        futures = {executor.submit(process_single_url, url, True, remove_selector): url for url in urls}
         for future in as_completed(futures):
             try:
                 results.append(future.result())
