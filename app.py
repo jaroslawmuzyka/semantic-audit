@@ -55,6 +55,8 @@ with st.sidebar:
     selected_model = st.selectbox("Model OpenAI", ["gpt-4o", "chatgpt-4o-latest", "gpt-4-turbo", "gpt-4o-mini", "gpt-5.4-mini", "gpt-5-mini", "gpt-5.4-nano"], index=4)
     
     jina_remove_selectors = st.text_input("Wyklucz selektory w JINA (np. header, .class)", placeholder="header, .cky-consent-container, #footer")
+    jina_target_selectors = st.text_input("Celuj w selektory w JINA (X-Target-Selector)", placeholder="body, .class, #id")
+
     
     with st.expander("Edytuj Prompty Systemowe", expanded=False):
         prompt_gap_analysis = st.text_area(
@@ -108,7 +110,26 @@ with tab1:
     user_context_input = st.text_area("Dodatkowy kontekst dla AI (opcjonalnie)", placeholder="np. Nie wspominaj o marce X...", height=100)
 
     if st.session_state.audit_step == 0:
-        if st.button("Krok 1: Pobierz treść do analizy (JINA)", type="primary"):
+        c_krok1, c_test = st.columns([1, 1])
+        with c_krok1:
+            btn_krok1 = st.button("Krok 1: Pobierz treść do analizy (JINA)", type="primary", use_container_width=True)
+        with c_test:
+            btn_test = st.button("Przetestuj JINA (Szybki Podgląd)", use_container_width=True)
+            
+        if btn_test:
+            if not url_input:
+                st.error("Proszę podać URL artykułu.")
+            else:
+                with st.spinner("Pobieranie JINA..."):
+                    data = fetch_url(url_input, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
+                    if data and data.get("data", {}).get("content"):
+                        st.success("Pobrano poprawnie.")
+                        with st.expander("Podgląd JINA", expanded=True):
+                            st.markdown(data["data"]["content"])
+                    else:
+                        st.error("Nie udało się pobrać treści.")
+
+        if btn_krok1:
             if not url_input:
                 st.error("Proszę podać URL artykułu.")
                 st.stop()
@@ -122,7 +143,7 @@ with tab1:
             
             try:
                 with st.status("Krok 1: Pobieranie treści...", expanded=True) as status:
-                    source_data = fetch_url(url_input, remove_selector=jina_remove_selectors)
+                    source_data = fetch_url(url_input, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
                     if not source_data:
                         st.error("Nie udało się pobrać treści artykułu.")
                         st.stop()
@@ -302,6 +323,17 @@ with tab2:
     st.caption("Kliknij dwukrotnie w komórkę, aby ją edytować. Użyj plusa (+) na dole tabeli, aby dodać nowy wiersz.")
     st.session_state.mass_df = st.data_editor(st.session_state.mass_df, num_rows="dynamic", use_container_width=True)
     
+    with st.expander("Przetestuj JINA na adresie (Podgląd)", expanded=False):
+        test_url = st.text_input("Podaj adres URL do testu", key="mass_test_url")
+        if st.button("Przetestuj URL", key="btn_test_mass_jina"):
+            if test_url:
+                with st.spinner("Pobieranie JINA..."):
+                    data = fetch_url(test_url, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
+                    if data and data.get("data", {}).get("content"):
+                        st.success("Pobrano poprawnie.")
+                        st.markdown(data["data"]["content"])
+                    else:
+                        st.error("Błąd pobierania.")
     col_btn1, col_btn2 = st.columns([1, 2])
     with col_btn1:
         if st.button("Wygeneruj brakujące frazy (AI)", use_container_width=True):
@@ -377,7 +409,7 @@ with tab2:
                 
                 if st.session_state.mass_jina_content is None:
                     with st.spinner("Pobieranie JINA..."):
-                        source_data = fetch_url(url, remove_selector=jina_remove_selectors)
+                        source_data = fetch_url(url, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
                         if source_data:
                             st.session_state.mass_jina_content = source_data.get("data", {}).get("content", "")
                         else:
@@ -407,7 +439,7 @@ with tab2:
                         if keyword and keyword.strip() != "":
                             serp_data = search(keyword, hl=mass_hl, gl=mass_gl)
                             competitor_urls = serp_data.get("urls", []) if not "error" in serp_data else []
-                            batch_result = fetch_competitors_batch(competitor_urls, remove_selector=jina_remove_selectors)
+                            batch_result = fetch_competitors_batch(competitor_urls, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
                             consolidated_competitors = batch_result["consolidated_markdown"]
                             
                         if not consolidated_competitors:
@@ -464,7 +496,7 @@ with tab2:
                 mass_status.write(f"Analiza wiersza {idx+1}/{len(df)}: {url}")
                 
                 try:
-                    source_data = fetch_url(url, remove_selector=jina_remove_selectors)
+                    source_data = fetch_url(url, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
                     if not source_data:
                         continue
                     source_content = source_data.get("data", {}).get("content", "")
@@ -475,7 +507,7 @@ with tab2:
                     if keyword and keyword.strip() != "":
                         serp_data = search(keyword, hl=mass_hl, gl=mass_gl)
                         competitor_urls = serp_data.get("urls", []) if not "error" in serp_data else []
-                        batch_result = fetch_competitors_batch(competitor_urls, remove_selector=jina_remove_selectors)
+                        batch_result = fetch_competitors_batch(competitor_urls, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
                         consolidated_competitors = batch_result["consolidated_markdown"]
                         
                     if not consolidated_competitors:
