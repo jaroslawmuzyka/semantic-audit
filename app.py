@@ -38,18 +38,18 @@ with st.sidebar:
     with st.expander("Edytuj Prompty Systemowe", expanded=False):
         prompt_gap_analysis = st.text_area(
             "Krok 4: Analiza luk i konkurentów", 
-            value="Jesteś ekspertem SEO i analitykiem AI Search. Twoim zadaniem jest dokładna analiza treści konkurencji, klasyfikacja atrybutów oraz znalezienie luk w kontekście tworzenia nowego, wysoce zoptymalizowanego artykułu.",
-            height=150
+            value="Analizuj konkurencję: treść → EAV → klasyfikacja URR → gap analysis.\n1. EAV Extraction: Wyciągnij trójki Entity-Attribute-Value bezpośrednio z tekstu.\n2. Klasyfikacja URR:\n- UNIQUE: W 1-2 z 10 konkurentów lub brak u nikogo (H1/Lead - wyróżnik)\n- ROOT: W 5+ z 10 konkurentów (H2 - obowiązkowy)\n- RARE: W 3-4 konkurentów, niszowy (H3/FAQ - opcjonalny)\n3. Gap Analysis: COVERED / GAP / UNIQUE.\nPriorytetyzacja gaps:\n- P1: ROOT atrybut w 7+ z 10 konkurentów (musisz mieć)\n- P2: ROOT atrybut w 5-6 konkurentów + PAA\n- P3: RARE atrybut z PAA/Related\n- P4: RARE atrybut w 1-2 konkurentów",
+            height=250
         )
         prompt_scoring = st.text_area(
             "Krok 5: Ocena wymiarów (Scoring)", 
-            value="Jesteś rygorystycznym audytorem treści specjalizującym się w E-E-A-T, Information Density i semantyce. Oceniasz tekst surowo i wyciągasz cytaty sprawiające problemy.",
-            height=150
+            value="Oceń artykuł w 9 wymiarach (0-10): CSI Alignment, BLUF, Chunk Quality, URR Placement, Cost of Retrieval, Information Density, SRL Salience, TF-IDF Quality, EEAT (Experience, Expertise, Authority, Trust).\nDla każdego wymiaru zidentyfikuj top problem i podaj surowy cytat (BEFORE).\nWymagane kroki:\n- EEAT detail: Zidentyfikuj obecne i brakujące sygnały.\n- SRL: Zidentyfikuj zdania, gdzie Central Entity (CE) jest Patient (zamiast Agent).\n- TF-IDF: Wypisz brakujące terminy.\nNie generuj sugestii AFTER na tym etapie. Skup się wyłącznie na rygorystycznej ocenie i wyciągnięciu bezpośrednich dowodów z tekstu.",
+            height=250
         )
         prompt_report = st.text_area(
             "Krok 6: Raport i Rekomendacje", 
-            value="Jesteś głównym strategiem treści. Na podstawie surowych danych analitycznych budujesz profesjonalny plan działania, dajesz jasne wytyczne BEFORE/AFTER i precyzyjnie liczysz Content Quality Score (CQS).",
-            height=150
+            value="Jesteś głównym strategiem treści. Na bazie surowych wyników wygeneruj profesjonalny raport audytu.\n1. BEFORE/AFTER: Stwórz ulepszoną wersję każdego problematycznego fragmentu (AFTER).\n2. SRL transformacje: Przekształć zdania z Patient na Agent.\n3. Struktura docelowa: H1/H2/H3 z oznaczeniami [OK]/[ZMIEŃ]/[NOWA] + jednozdaniowy BLUF dla każdego H2.\n4. E-E-A-T: Wygeneruj gotowe bloki tekstu (Bio, disclaimer, data).\n5. Rekomendacje z priorytetami:\n- KRYTYCZNE: Wysoki wpływ, Niski wysiłek\n- WYSOKIE: Wysoki wpływ, Średni wysiłek\n- ŚREDNIE: Wysoki wpływ, Wysoki wysiłek\nOblicz CQS (Content Quality Score) na podstawie ocen cząstkowych i podaj szacowany wpływ (+pkt) dla każdej rekomendacji.",
+            height=250
         )
 
 # Input
