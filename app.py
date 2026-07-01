@@ -280,17 +280,31 @@ with tab2:
     elif mass_serp_input == "USA (EN)": mass_hl, mass_gl = "en", "us"
     elif mass_serp_input == "Niemcy (DE)": mass_hl, mass_gl = "de", "de"
     
-    uploaded_file = st.file_uploader("Wybierz plik XLSX", type=["xlsx"])
-    if uploaded_file is not None:
-        if st.session_state.mass_df is None:
-            df = pd.read_excel(uploaded_file)
-            for col in ["URL", "Fraza", "Title"]:
-                if col not in df.columns: df[col] = ""
-            st.session_state.mass_df = df
-            
-        st.dataframe(st.session_state.mass_df)
+    uploaded_file = st.file_uploader("Opcjonalnie: Wgraj plik XLSX (lub wpisz dane ręcznie poniżej)", type=["xlsx"])
+    
+    if "last_uploaded_file" not in st.session_state:
+        st.session_state.last_uploaded_file = None
+
+    if uploaded_file is not None and st.session_state.last_uploaded_file != uploaded_file.name:
+        df = pd.read_excel(uploaded_file)
+        for col in ["URL", "Fraza", "Title"]:
+            if col not in df.columns: 
+                df[col] = ""
+            # Force column to string dtype so we don't get float assignment errors on empty columns
+            df[col] = df[col].fillna("").astype(str)
+        st.session_state.mass_df = df
+        st.session_state.last_uploaded_file = uploaded_file.name
+
+    if st.session_state.mass_df is None:
+        st.session_state.mass_df = pd.DataFrame(columns=["URL", "Fraza", "Title"])
         
-        if st.button("Wygeneruj brakujące frazy (AI)"):
+    st.markdown("### Tabela adresów (edytowalna)")
+    st.caption("Kliknij dwukrotnie w komórkę, aby ją edytować. Użyj plusa (+) na dole tabeli, aby dodać nowy wiersz.")
+    st.session_state.mass_df = st.data_editor(st.session_state.mass_df, num_rows="dynamic", use_container_width=True)
+    
+    col_btn1, col_btn2 = st.columns([1, 2])
+    with col_btn1:
+        if st.button("Wygeneruj brakujące frazy (AI)", use_container_width=True):
             df = st.session_state.mass_df
             for idx, row in df.iterrows():
                 url = row.get("URL")
@@ -307,8 +321,9 @@ with tab2:
             st.session_state.mass_df = df
             st.rerun()
             
+    with col_btn2:
         if st.session_state.mass_step == 0:
-            if st.button("Rozpocznij Audyt Masowy", type="primary"):
+            if st.button("Rozpocznij Audyt Masowy", type="primary", use_container_width=True):
                 st.session_state.mass_step = 1
                 st.session_state.mass_idx = 0
                 st.session_state.mass_results = []
@@ -320,8 +335,8 @@ with tab2:
                 st.session_state.mass_jina_content = None
                 st.rerun()
 
-        if st.session_state.mass_step == 1:
-            df = st.session_state.mass_df
+    if st.session_state.mass_step == 1:
+        df = st.session_state.mass_df
             
             if mass_manual_review:
                 idx = st.session_state.mass_idx
