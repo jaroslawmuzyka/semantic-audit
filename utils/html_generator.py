@@ -310,14 +310,12 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
                 <div class="left-col">
                     <div class="score-cards">
                         <div class="score-card">
-                            <span class="badge-top-right" style="color: {cqs_color}; border-color: {cqs_color}; background: #fff;">{cqs_badge}</span>
                             <span class="score-title">Content Quality Score</span>
                             <div>
                                 <span class="score-value">{report.cqs_score}</span><span class="score-max"> / 100</span>
                             </div>
                         </div>
                         <div class="score-card">
-                            <span class="badge-top-right" style="color: {ai_color}; border-color: {ai_color}; background: #fff;">{ai_badge}</span>
                             <span class="score-title">AI Citability Score</span>
                             <div>
                                 <span class="score-value" style="color: {ai_color};">{report.ai_citability_score}</span><span class="score-max"> / 10</span>
@@ -572,10 +570,8 @@ def generate_master_html_report(all_results: list) -> bytes:
         
         if r.cqs_score >= 80:
             excellent_count += 1
-            badge = "<span style='color: #67c23a; font-weight: bold;'>Świetnie</span>"
         else:
             needs_improvement_count += 1
-            badge = "<span style='color: #e6a23c; font-weight: bold;'>Uwaga</span>"
             
         ai_badge_color = "#67c23a" if r.ai_citability_score >= 8 else "#e6a23c"
         
@@ -604,36 +600,38 @@ def generate_master_html_report(all_results: list) -> bytes:
             <summary class="url-summary">
                 <div class="sum-row">
                     <span class="s-url">{url}</span>
-                    <span class="s-score">CQS: {r.cqs_score}/100 ({badge}) | AI Cit: <span style="color:{ai_badge_color}">{r.ai_citability_score}/10</span></span>
+                    <span class="s-score">CQS: {r.cqs_score}/100 | AI Cit: <span style="color:{ai_badge_color}">{r.ai_citability_score}/10</span></span>
                 </div>
             </summary>
             <div class="details-content">
                 <p><strong>Fraza:</strong> {keyword}</p>
                 <p><strong>Executive Summary:</strong> {r.executive_summary}</p>
                 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                    <div>
+                <div class="card-grid">
+                    <div class="data-card">
                         <h4>Rekomendacje:</h4>
-                        <ul style="font-size: 14px;">
+                        <ul class="data-list">
                             {''.join(crit) if crit else ''}
                             {''.join(high) if high else ''}
                             {''.join(med) if med else ''}
                             {'' if not (crit or high or med) else ''}
                         </ul>
                     </div>
-                    <div>
+                    <div class="data-card">
                         <h4>Docelowa Struktura H2:</h4>
-                        <ul style="font-size: 14px;">
+                        <ul class="data-list">
                             {''.join(structure) if structure else '<li>Brak</li>'}
                         </ul>
-                        
+                    </div>
+                    <div class="data-card">
                         <h4>Braki E-E-A-T:</h4>
-                        <ul style="font-size: 14px;">
+                        <ul class="data-list">
                             {''.join(eeat_miss) if eeat_miss else '<li>Brak</li>'}
                         </ul>
-                        
+                    </div>
+                    <div class="data-card">
                         <h4>Brakujące Słowa (TF-IDF):</h4>
-                        <p style="font-size: 14px; color: #666;">{tf_idf}</p>
+                        <p style="font-size: 14px; color: #666; margin: 0;">{tf_idf}</p>
                     </div>
                 </div>
             </div>
@@ -696,8 +694,23 @@ def generate_master_html_report(all_results: list) -> bytes:
                 cursor: pointer;
                 font-weight: 500;
                 list-style: none;
+                position: relative;
+                padding-right: 40px;
             }}
             .url-summary::-webkit-details-marker {{ display: none; }}
+            .url-summary::after {{
+                content: '▼';
+                position: absolute;
+                right: 20px;
+                top: 50%;
+                transform: translateY(-50%);
+                color: #409eff;
+                transition: transform 0.2s ease;
+                font-size: 12px;
+            }}
+            .url-details[open] .url-summary::after {{
+                transform: translateY(-50%) rotate(180deg);
+            }}
             .sum-row {{
                 display: flex;
                 justify-content: space-between;
@@ -709,6 +722,31 @@ def generate_master_html_report(all_results: list) -> bytes:
                 border-top: 1px solid #eee;
                 margin-top: 10px;
                 padding-top: 20px;
+            }}
+            .card-grid {{
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 20px;
+                margin-top: 20px;
+            }}
+            .data-card {{
+                background: #fdfaf3;
+                border: 1px solid #f2eed8;
+                border-radius: 8px;
+                padding: 20px;
+            }}
+            .data-card h4 {{
+                margin-top: 0;
+                margin-bottom: 15px;
+                color: #2c3e50;
+                border-bottom: 1px solid #e5eaef;
+                padding-bottom: 10px;
+                font-size: 15px;
+            }}
+            .data-list {{
+                font-size: 14px;
+                margin: 0;
+                padding-left: 20px;
             }}
             li {{ margin-bottom: 8px; }}
         </style>
