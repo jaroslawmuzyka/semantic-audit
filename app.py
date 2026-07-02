@@ -217,14 +217,16 @@ with tab1:
             progress_bar.progress(75)
 
             with st.status("Krok 6: Raport i Rekomendacje...", expanded=True) as status:
+                from utils.html_generator import generate_single_html_report
                 report, u = generate_audit_report(source_content, gap_analysis, scores, selected_model, prompt_report, language_name, user_context_input)
                 total_in += u.prompt_tokens; total_out += u.completion_tokens
                 status.update(label="Krok 6: Zakończono.", state="complete", expanded=False)
                 
             progress_bar.progress(90)
 
-            with st.status("Krok 7: XLSX...", expanded=True) as status:
+            with st.status("Krok 7: XLSX i HTML...", expanded=True) as status:
                 excel_bytes = generate_excel_report(gap_analysis, scores, report, source_content, consolidated_competitors)
+                html_bytes = generate_single_html_report(url_input, keyword_input, gap_analysis, scores, report)
                 status.update(label="Krok 7: Gotowy.", state="complete", expanded=False)
                 
             progress_bar.progress(100)
@@ -234,6 +236,7 @@ with tab1:
             st.success("Audyt zakończony sukcesem!")
             st.session_state.audit_completed = True
             st.session_state.excel_bytes = excel_bytes
+            st.session_state.html_bytes = html_bytes
             st.session_state.report = report
             st.session_state.total_cost = cost
             st.session_state.total_tokens = {"in": total_in, "out": total_out}
@@ -253,6 +256,7 @@ with tab1:
     if st.session_state.audit_completed and st.session_state.report is not None:
         report = st.session_state.report
         excel_bytes = st.session_state.excel_bytes
+        html_bytes = st.session_state.html_bytes
         st.divider()
         st.subheader("📊 Wyniki Audytu")
         
@@ -264,7 +268,9 @@ with tab1:
         st.markdown("### Executive Summary")
         st.write(report.executive_summary)
         
-        st.download_button("Pobierz pełny raport audytu (XLSX)", data=excel_bytes, file_name="audit_report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
+        c_d1, c_d2 = st.columns(2)
+        c_d1.download_button("Pobierz raport (XLSX)", data=excel_bytes, file_name="audit_report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        c_d2.download_button("Pobierz raport (HTML)", data=html_bytes, file_name="audit_report.html", mime="text/html", use_container_width=True)
         
         with st.expander("Zobacz główne rekomendacje", expanded=True):
             for rec in report.recommendations:
@@ -369,13 +375,16 @@ with tab2:
 
     if st.session_state.mass_results:
         st.success(f"Ukończono {len(st.session_state.mass_results)} analiz. Możesz pobrać dotychczasowe wyniki w każdej chwili.")
-        c_zip, c_master, c_reset = st.columns(3)
+        c_zip, c_master, c_master_html, c_reset = st.columns(4)
         with c_zip:
             if st.session_state.mass_zip:
                 st.download_button("Pobierz paczkę ZIP (wszystkie zrobione)", data=st.session_state.mass_zip, file_name="audyty_masowe.zip", mime="application/zip", use_container_width=True)
         with c_master:
             if st.session_state.mass_master:
                 st.download_button("Pobierz Master Excel (zbiorczy)", data=st.session_state.mass_master, file_name="master_report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        with c_master_html:
+            if getattr(st.session_state, "mass_master_html", None):
+                st.download_button("Pobierz Master HTML", data=st.session_state.mass_master_html, file_name="master_report.html", mime="text/html", use_container_width=True)
         with c_reset:
             if st.button("Zresetuj analizę masową", use_container_width=True):
                 st.session_state.mass_step = 0
@@ -383,6 +392,7 @@ with tab2:
                 st.session_state.mass_files = {}
                 st.session_state.mass_zip = None
                 st.session_state.mass_master = None
+                st.session_state.mass_master_html = None
                 st.session_state.mass_idx = 0
                 st.rerun()
         st.divider()
@@ -457,23 +467,31 @@ with tab2:
                         
                         excel_bytes = generate_excel_report(gap_analysis, scores, report, source_content, consolidated_competitors)
                         filename = f"audit_{idx+1}_{url.split('//')[-1].split('/')[0]}.xlsx".replace("www.", "")
-                        
                         st.session_state.mass_files[filename] = excel_bytes
+                        
+                        html_bytes = generate_single_html_report(url, keyword, gap_analysis, scores, report)
+                        filename_html = f"audit_{idx+1}_{url.split('//')[-1].split('/')[0]}.html".replace("www.", "")
+                        st.session_state.mass_files[filename_html] = html_bytes
+                        url_cost = (total_in / 1_000_000) * p_cost["in"] + (total_out / 1_000_000) * p_cost["out"]
                         st.session_state.mass_results.append({
                             "url": url,
                             "keyword": keyword,
                             "report": report,
                             "scores": scores,
-                            "gap_analysis": gap_analysis
+                            "gap_analysis": gap_analysis,
+                            "tokens_in": total_in,
+                            "tokens_out": total_out,
+                            "cost": url_cost
                         })
                         
                         st.session_state.total_tokens["in"] += total_in
                         st.session_state.total_tokens["out"] += total_out
-                        st.session_state.total_cost += (total_in / 1_000_000) * p_cost["in"] + (total_out / 1_000_000) * p_cost["out"]
+                        st.session_state.total_cost += url_cost
                         
                         # Generate partial archives
                         st.session_state.mass_zip = create_zip_archive(st.session_state.mass_files)
                         st.session_state.mass_master = generate_master_excel_report(st.session_state.mass_results)
+                        st.session_state.mass_master_html = generate_master_html_report(st.session_state.mass_results)
                         
                     except Exception as e:
                         st.error(f"Błąd przy analizie {url}: {e}")
@@ -525,23 +543,31 @@ with tab2:
                     
                     excel_bytes = generate_excel_report(gap_analysis, scores, report, source_content, consolidated_competitors)
                     filename = f"audit_{idx+1}_{url.split('//')[-1].split('/')[0]}.xlsx".replace("www.", "")
-                    
                     st.session_state.mass_files[filename] = excel_bytes
+                    
+                    html_bytes = generate_single_html_report(url, keyword, gap_analysis, scores, report)
+                    filename_html = f"audit_{idx+1}_{url.split('//')[-1].split('/')[0]}.html".replace("www.", "")
+                    st.session_state.mass_files[filename_html] = html_bytes
+                    url_cost = (total_in / 1_000_000) * p_cost["in"] + (total_out / 1_000_000) * p_cost["out"]
                     st.session_state.mass_results.append({
                         "url": url,
                         "keyword": keyword,
                         "report": report,
                         "scores": scores,
-                        "gap_analysis": gap_analysis
+                        "gap_analysis": gap_analysis,
+                        "tokens_in": total_in,
+                        "tokens_out": total_out,
+                        "cost": url_cost
                     })
                     
                     st.session_state.total_tokens["in"] += total_in
                     st.session_state.total_tokens["out"] += total_out
-                    st.session_state.total_cost += (total_in / 1_000_000) * p_cost["in"] + (total_out / 1_000_000) * p_cost["out"]
+                    st.session_state.total_cost += url_cost
                     
                     # Generate partial archives
                     st.session_state.mass_zip = create_zip_archive(st.session_state.mass_files)
                     st.session_state.mass_master = generate_master_excel_report(st.session_state.mass_results)
+                    st.session_state.mass_master_html = generate_master_html_report(st.session_state.mass_results)
                     
                 except Exception as e:
                     st.error(f"Błąd przy analizie {url}: {e}")

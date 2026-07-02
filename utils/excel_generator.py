@@ -108,6 +108,15 @@ def generate_master_excel_report(all_results: list) -> bytes:
     full_data = []
     short_data = []
     action_data = []
+    eav_data = []
+    
+    total_cqs = 0
+    excellent_count = 0
+    needs_improvement_count = 0
+    total_articles = 0
+    total_cost = 0.0
+    total_tokens_in = 0
+    total_tokens_out = 0
     
     for item in all_results:
         url = item.get("url", "")
@@ -116,8 +125,23 @@ def generate_master_excel_report(all_results: list) -> bytes:
         s = item.get("scores")
         g = item.get("gap_analysis")
         
+        t_in = item.get("tokens_in", 0)
+        t_out = item.get("tokens_out", 0)
+        cost = item.get("cost", 0.0)
+        
         if not r or not s or not g:
             continue
+            
+        total_articles += 1
+        total_cqs += r.cqs_score
+        total_cost += cost
+        total_tokens_in += t_in
+        total_tokens_out += t_out
+        
+        if r.cqs_score >= 80:
+            excellent_count += 1
+        else:
+            needs_improvement_count += 1
             
         # --- 1. FULL ROW ---
         row_full = {
@@ -125,6 +149,9 @@ def generate_master_excel_report(all_results: list) -> bytes:
             "Fraza": keyword,
             "CQS Score": r.cqs_score,
             "AI Citability": r.ai_citability_score,
+            "Koszt ($)": cost,
+            "Tokens IN": t_in,
+            "Tokens OUT": t_out,
             "Executive Summary": r.executive_summary,
             "Missing TF-IDF": ", ".join(s.missing_tf_idf_terms) if s.missing_tf_idf_terms else ""
         }
@@ -155,6 +182,9 @@ def generate_master_excel_report(all_results: list) -> bytes:
             "Fraza": keyword,
             "CQS Score": r.cqs_score,
             "AI Citability": r.ai_citability_score,
+            "Koszt ($)": cost,
+            "Tokens IN": t_in,
+            "Tokens OUT": t_out,
             "Executive Summary": r.executive_summary,
             "Missing TF-IDF": row_full["Missing TF-IDF"]
         }
@@ -189,6 +219,7 @@ def generate_master_excel_report(all_results: list) -> bytes:
             "URL": url,
             "Fraza": keyword,
             "CQS Score": r.cqs_score,
+            "Koszt ($)": cost,
             "KRYTYCZNE Rekomendacje": "\n\n".join(crit) if crit else "Brak",
             "WYSOKIE Rekomendacje": "\n\n".join(high) if high else "Brak",
             "ŚREDNIE Rekomendacje": "\n\n".join(med) if med else "Brak",
@@ -199,14 +230,52 @@ def generate_master_excel_report(all_results: list) -> bytes:
         
         action_data.append(row_action)
         
+        # --- 4. ZBIORCZY EAV MATRIX ---
+        for e in g.eav_matrix:
+            row_eav = {
+                "URL": url,
+                "Fraza": keyword,
+                "Attribute": e.attribute,
+                "URR Type": e.urr_type,
+                "Coverage": e.coverage,
+                "Priority": e.priority,
+                "Status": e.status
+            }
+            for i in range(10):
+                col_name = f"K{i+1}"
+                if i < len(e.competitors_presence):
+                    row_eav[col_name] = "+" if e.competitors_presence[i] else "-"
+                else:
+                    row_eav[col_name] = "Brak danych"
+            eav_data.append(row_eav)
+            
+    # --- 5. PODSUMOWANIE ---
+    avg_cqs = round(total_cqs / total_articles, 2) if total_articles > 0 else 0
+    summary_text = f"Sprawdzono {total_articles} artykułów. {excellent_count} z nich ma ocenę bardzo dobrą (CQS >= 80), {needs_improvement_count} jest do poprawy (CQS < 80). Średnia ilość punktów CQS to {avg_cqs}."
+    
+    summary_data = [
+        {"Metryka": "Podsumowanie", "Wartość": summary_text},
+        {"Metryka": "Zbadane adresy URL", "Wartość": total_articles},
+        {"Metryka": "Średni wynik CQS", "Wartość": avg_cqs},
+        {"Metryka": "Artykuły bardzo dobre (>=80)", "Wartość": excellent_count},
+        {"Metryka": "Artykuły do poprawy (<80)", "Wartość": needs_improvement_count},
+        {"Metryka": "Łączny koszt audytu masowego ($)", "Wartość": round(total_cost, 4)},
+        {"Metryka": "Łączne zużycie tokenów (IN)", "Wartość": total_tokens_in},
+        {"Metryka": "Łączne zużycie tokenów (OUT)", "Wartość": total_tokens_out}
+    ]
+        
     df_full = pd.DataFrame(full_data)
     df_short = pd.DataFrame(short_data)
     df_action = pd.DataFrame(action_data)
+    df_eav = pd.DataFrame(eav_data)
+    df_summary = pd.DataFrame(summary_data)
     
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_summary.to_excel(writer, sheet_name="Podsumowanie", index=False)
         df_action.to_excel(writer, sheet_name="Rekomendacje (Actionable)", index=False)
         df_short.to_excel(writer, sheet_name="Skrócony (Bez Ocen)", index=False)
+        df_eav.to_excel(writer, sheet_name="Zbiorczy Matrix EAV", index=False)
         df_full.to_excel(writer, sheet_name="Pełny Raport", index=False)
     
     output.seek(0)
