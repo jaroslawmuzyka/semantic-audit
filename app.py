@@ -7,6 +7,7 @@ from utils.jina_api import fetch_url, fetch_competitors_batch
 from utils.nodeshub_api import search
 from utils.openai_llm import analyze_competitor_gaps, score_content, generate_audit_report, generate_keyword_from_url
 from utils.excel_generator import generate_excel_report, generate_master_excel_report, create_zip_archive
+from utils.html_generator import generate_single_html_report, generate_master_html_report
 
 st.set_page_config(page_title="AI Content Auditor", page_icon="📝", layout="wide")
 
@@ -217,7 +218,6 @@ with tab1:
             progress_bar.progress(75)
 
             with st.status("Krok 6: Raport i Rekomendacje...", expanded=True) as status:
-                from utils.html_generator import generate_single_html_report
                 report, u = generate_audit_report(source_content, gap_analysis, scores, selected_model, prompt_report, language_name, user_context_input)
                 total_in += u.prompt_tokens; total_out += u.completion_tokens
                 status.update(label="Krok 6: Zakończono.", state="complete", expanded=False)
