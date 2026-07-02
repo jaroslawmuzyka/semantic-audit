@@ -137,13 +137,9 @@ def generate_excel_report(gap_analysis: GapAnalysisResult, scores: ContentScores
         
         # Sheet 6: Action Plan
         action_plan_data = {
-            "Docelowa Struktura Nagłówków": report.target_structure_h2,
-            "Suggested BLUF (First Sentence)": report.bluf_per_h2 + [""] * (len(report.target_structure_h2) - len(report.bluf_per_h2)) 
+            "Docelowa Struktura Nagłówków": [entry.heading for entry in report.target_structure] if getattr(report, "target_structure", None) else [],
+            "Suggested BLUF (First Sentence)": [entry.bluf for entry in report.target_structure] if getattr(report, "target_structure", None) else []
         }
-        # Pad with empty strings if lengths don't match
-        max_len = max(len(report.target_structure_h2), len(report.bluf_per_h2))
-        action_plan_data["Docelowa Struktura Nagłówków"].extend([""] * (max_len - len(action_plan_data["Docelowa Struktura Nagłówków"])))
-        action_plan_data["Suggested BLUF (First Sentence)"].extend([""] * (max_len - len(action_plan_data["Suggested BLUF (First Sentence)"])))
         
         df_action = pd.DataFrame(action_plan_data)
         df_action.to_excel(writer, sheet_name="Action Plan", index=False)
@@ -246,13 +242,10 @@ def generate_master_excel_report(all_results: list) -> bytes:
         high = [f"[- {rec.title} -]\nZmień z:\n{rec.before_quote}\nNa:\n{rec.after_generated}" for rec in r.recommendations if rec.priority.upper() == "WYSOKIE"]
         med  = [f"[- {rec.title} -]\nZmień z:\n{rec.before_quote}\nNa:\n{rec.after_generated}" for rec in r.recommendations if rec.priority.upper() == "ŚREDNIE"]
         
-        h2s = r.target_structure_h2 if r.target_structure_h2 else []
-        blufs = r.bluf_per_h2 if r.bluf_per_h2 else []
         structure = []
-        for i in range(max(len(h2s), len(blufs))):
-            h2 = h2s[i] if i < len(h2s) else ""
-            bluf = blufs[i] if i < len(blufs) else ""
-            structure.append(f"{h2}\nBLUF: {bluf}")
+        if getattr(r, "target_structure", None):
+            for entry in r.target_structure:
+                structure.append(f"{entry.heading}\nBLUF: {entry.bluf}")
             
         eeat_miss = []
         for e in s.eeat_signals:

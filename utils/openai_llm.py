@@ -65,13 +65,16 @@ class Recommendation(BaseModel):
     after_generated: str
     impact_cqs: int
 
+class TargetHeading(BaseModel):
+    heading: str
+    bluf: str
+
 class AuditReport(BaseModel):
     cqs_score: int
     ai_citability_score: int
     executive_summary: str
     recommendations: List[Recommendation]
-    target_structure_h2: List[str]
-    bluf_per_h2: List[str] # Bottom Line Up Front suggested first sentences
+    target_structure: List[TargetHeading]
     eeat_ready_blocks: str # Bio, disclaimer, etc
 
 def analyze_competitor_gaps(topic, consolidated_competitors, model_name, system_prompt, language, user_context="") -> tuple:

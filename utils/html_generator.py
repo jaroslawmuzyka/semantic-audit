@@ -397,16 +397,14 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
     """
 
     # Target Structure HTML
-    if report.target_structure_h2:
+    if getattr(report, "target_structure", None):
         html_content += f"""
         <div class="details-section">
             <h2>Docelowa Struktura Nagłówków (H1-H3) i BLUF</h2>
         """
-        h2s = report.target_structure_h2
-        blufs = report.bluf_per_h2 if report.bluf_per_h2 else []
-        for i in range(max(len(h2s), len(blufs))):
-            h2 = h2s[i] if i < len(h2s) else ""
-            bluf = blufs[i] if i < len(blufs) else ""
+        for entry in report.target_structure:
+            h2 = entry.heading
+            bluf = entry.bluf
             html_content += f"""
             <div style="margin-bottom: 15px; padding: 15px; background: #fafbfc; border-left: 4px solid #409eff; border-radius: 4px;">
                 <strong style="font-size: 16px;">{h2}</strong><br>
@@ -585,13 +583,10 @@ def generate_master_html_report(all_results: list) -> bytes:
         high = [f"<li><strong>[{rec.title}]</strong><br><span style='color:#666;font-size:13px;'>Przed: {rec.before_quote}<br>Po: {rec.after_generated}</span></li>" for rec in r.recommendations if rec.priority.upper() == "WYSOKIE"]
         med  = [f"<li><strong>[{rec.title}]</strong><br><span style='color:#666;font-size:13px;'>Przed: {rec.before_quote}<br>Po: {rec.after_generated}</span></li>" for rec in r.recommendations if rec.priority.upper() == "ŚREDNIE"]
         
-        h2s = r.target_structure_h2 if r.target_structure_h2 else []
-        blufs = r.bluf_per_h2 if r.bluf_per_h2 else []
         structure = []
-        for i in range(max(len(h2s), len(blufs))):
-            h2 = h2s[i] if i < len(h2s) else ""
-            bluf = blufs[i] if i < len(blufs) else ""
-            structure.append(f"<li><strong>{h2}</strong> (BLUF: {bluf})</li>")
+        if getattr(r, "target_structure", None):
+            for entry in r.target_structure:
+                structure.append(f"<li><strong>{entry.heading}</strong> (BLUF: {entry.bluf})</li>")
             
         eeat_miss = []
         if s and hasattr(s, "eeat_signals"):
