@@ -238,14 +238,14 @@ def generate_master_excel_report(all_results: list) -> bytes:
         
         
         # --- 3. ACTIONABLE ROW ---
-        crit = [f"[- {rec.title} -]\nZmień z:\n{rec.before_quote}\nNa:\n{rec.after_generated}" for rec in r.recommendations if rec.priority.upper() == "KRYTYCZNE"]
-        high = [f"[- {rec.title} -]\nZmień z:\n{rec.before_quote}\nNa:\n{rec.after_generated}" for rec in r.recommendations if rec.priority.upper() == "WYSOKIE"]
-        med  = [f"[- {rec.title} -]\nZmień z:\n{rec.before_quote}\nNa:\n{rec.after_generated}" for rec in r.recommendations if rec.priority.upper() == "ŚREDNIE"]
+        crit = [f"[- {rec.title} -]\nObecna treść:\n{rec.before_quote}\nPrzykładowa (nowa) treść:\n{rec.after_generated}" for rec in r.recommendations if rec.priority.upper() == "KRYTYCZNE"]
+        high = [f"[- {rec.title} -]\nObecna treść:\n{rec.before_quote}\nPrzykładowa (nowa) treść:\n{rec.after_generated}" for rec in r.recommendations if rec.priority.upper() == "WYSOKIE"]
+        med  = [f"[- {rec.title} -]\nObecna treść:\n{rec.before_quote}\nPrzykładowa (nowa) treść:\n{rec.after_generated}" for rec in r.recommendations if rec.priority.upper() == "ŚREDNIE"]
         
         structure = []
         if getattr(r, "target_structure", None):
             for entry in r.target_structure:
-                structure.append(f"{entry.heading}\nBLUF: {entry.bluf}")
+                structure.append(f"{entry.heading}\nPrzykładowy (nowy) BLUF: {entry.bluf}")
             
         eeat_miss = []
         for e in s.eeat_signals:

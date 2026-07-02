@@ -328,8 +328,7 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
                     <div class="summary-card">
                         <div class="summary-text">
                             Zidentyfikowano <strong>{crit_high_count} problemów krytycznych/ważnych.</strong><br><br>
-                            <em>Profil audytu: Audyt Semantyczny - wagi i kryteria dostosowane do typu treści.</em><br><br>
-                            <strong>Podsumowanie Executive:</strong> {report.executive_summary}
+                            <strong>Podsumowanie:</strong> {report.executive_summary}
                         </div>
                     </div>
                 </div>
@@ -356,7 +355,7 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
         <div class="before-after-block">
             <strong>[{r.priority}] {r.title}</strong> (Wpływ: +{r.impact_cqs} pkt)<br>
             <div style="margin-top: 10px; color: #666; font-style: italic;">Przed zmianą: "{r.before_quote}"</div>
-            <div class="after-text">Rekomendowana treść: "{r.after_generated}"</div>
+            <div class="after-text">Przykładowa (nowa) treść: "{r.after_generated}"</div>
         </div>
         """
         
@@ -408,7 +407,7 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
             html_content += f"""
             <div style="margin-bottom: 15px; padding: 15px; background: #fafbfc; border-left: 4px solid #409eff; border-radius: 4px;">
                 <strong style="font-size: 16px;">{h2}</strong><br>
-                <span style="color: #666; font-size: 14px; display: inline-block; margin-top: 5px;"><strong>BLUF:</strong> {bluf}</span>
+                <span style="color: #666; font-size: 14px; display: inline-block; margin-top: 5px;"><strong>Przykładowy (nowy) BLUF:</strong> {bluf}</span>
             </div>
             """
     else:
@@ -579,14 +578,14 @@ def generate_master_html_report(all_results: list) -> bytes:
             
         ai_badge_color = "#67c23a" if r.ai_citability_score >= 8 else "#e6a23c"
         
-        crit = [f"<li><strong>[{rec.title}]</strong><br><span style='color:#666;font-size:13px;'>Przed: {rec.before_quote}<br>Po: {rec.after_generated}</span></li>" for rec in r.recommendations if rec.priority.upper() == "KRYTYCZNE"]
-        high = [f"<li><strong>[{rec.title}]</strong><br><span style='color:#666;font-size:13px;'>Przed: {rec.before_quote}<br>Po: {rec.after_generated}</span></li>" for rec in r.recommendations if rec.priority.upper() == "WYSOKIE"]
-        med  = [f"<li><strong>[{rec.title}]</strong><br><span style='color:#666;font-size:13px;'>Przed: {rec.before_quote}<br>Po: {rec.after_generated}</span></li>" for rec in r.recommendations if rec.priority.upper() == "ŚREDNIE"]
+        crit = [f"<li><strong>[{rec.title}]</strong><br><span style='color:#666;font-size:13px;'>Obecna treść: {rec.before_quote}<br>Przykładowa (nowa) treść: {rec.after_generated}</span></li>" for rec in r.recommendations if rec.priority.upper() == "KRYTYCZNE"]
+        high = [f"<li><strong>[{rec.title}]</strong><br><span style='color:#666;font-size:13px;'>Obecna treść: {rec.before_quote}<br>Przykładowa (nowa) treść: {rec.after_generated}</span></li>" for rec in r.recommendations if rec.priority.upper() == "WYSOKIE"]
+        med  = [f"<li><strong>[{rec.title}]</strong><br><span style='color:#666;font-size:13px;'>Obecna treść: {rec.before_quote}<br>Przykładowa (nowa) treść: {rec.after_generated}</span></li>" for rec in r.recommendations if rec.priority.upper() == "ŚREDNIE"]
         
         structure = []
         if getattr(r, "target_structure", None):
             for entry in r.target_structure:
-                structure.append(f"<li><strong>{entry.heading}</strong> (BLUF: {entry.bluf})</li>")
+                structure.append(f"<li><strong>{entry.heading}</strong> (Przykładowy (nowy) BLUF: {entry.bluf})</li>")
             
         eeat_miss = []
         if s and hasattr(s, "eeat_signals"):
@@ -719,7 +718,19 @@ def generate_master_html_report(all_results: list) -> bytes:
                 justify-content: space-between;
                 align-items: center;
             }}
-            .s-url {{ color: #409eff; word-break: break-all; margin-right: 20px; }}
+            .s-url {{
+                flex-grow: 1;
+                font-weight: 600;
+                color: #2c3e50;
+                word-break: break-all;
+                padding-right: 15px;
+                font-size: 13px;
+            }}
+            .s-score {{
+                white-space: nowrap;
+                color: #555;
+                font-size: 13px;
+            }}
             .details-content {{
                 padding: 0 20px 20px 20px;
                 border-top: 1px solid #eee;
