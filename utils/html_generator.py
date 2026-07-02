@@ -100,7 +100,7 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
             
-            :root {
+            :root {{
                 --bg-color: #f4f6f9;
                 --card-bg: #ffffff;
                 --text-main: #0A2540;
@@ -110,8 +110,8 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
                 --card-beige: #F8F9FA;
                 --border-color: #E2E8F0;
                 --primary-blue: #006699;
-            }
-            body {
+            }}
+            body {{
                 font-family: 'Manrope', sans-serif;
                 background-color: var(--bg-color);
                 color: var(--text-main);
@@ -240,7 +240,7 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
                 color: var(--text-main);
                 font-weight: 500;
             }}
-            .chart-card {
+            .chart-card {{
                 background-color: var(--card-bg);
                 border-radius: 16px;
                 padding: 30px;
@@ -250,14 +250,14 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
                 align-items: center;
                 justify-content: center;
                 border: 1px solid var(--border-color);
-            }
-            .chart-title {
+            }}
+            .chart-title {{
                 width: 100%;
                 font-size: 18px;
                 font-weight: 800;
                 margin-bottom: 25px;
                 color: var(--text-main);
-            }
+            }}
             .canvas-container {{
                 width: 100%;
                 max-width: 450px;
@@ -467,28 +467,28 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
                 options: {{
                     responsive: true,
                     maintainAspectRatio: false,
-                    scales: {
-                        r: {
+                    scales: {{
+                        r: {{
                             beginAtZero: true,
                             min: 0,
                             max: 10,
-                            angleLines: { color: 'rgba(0, 0, 0, 0.05)' },
-                            grid: { color: 'rgba(0, 0, 0, 0.05)' },
-                            pointLabels: {
-                                font: { size: 12, family: "'Manrope', sans-serif", weight: '600' },
+                            angleLines: {{ color: 'rgba(0, 0, 0, 0.05)' }},
+                            grid: {{ color: 'rgba(0, 0, 0, 0.05)' }},
+                            pointLabels: {{
+                                font: {{ size: 12, family: "'Manrope', sans-serif", weight: '600' }},
                                 color: '#5B6B80'
-                            },
-                            ticks: {
+                            }},
+                            ticks: {{
                                 stepSize: 2,
                                 display: false
-                            }
-                        }
-                    },
-                    plugins: {
-                        legend: { display: false }
-                    }
-                }
-            });
+                            }}
+                        }}
+                    }},
+                    plugins: {{
+                        legend: {{ display: false }}
+                    }}
+                }}
+            }});
         </script>
     </body>
     </html>
@@ -652,26 +652,26 @@ def generate_master_html_report(all_results: list) -> bytes:
         <title>Zbiorczy Raport Audytu Masowego</title>
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
-            body {
+            body {{
                 font-family: 'Manrope', sans-serif;
                 background-color: #f4f6f9;
                 color: #0A2540;
                 padding: 40px 20px;
                 margin: 0;
-            }
-            .container {
+            }}
+            .container {{
                 max-width: 1000px;
                 margin: 0 auto;
-            }
-            .summary-box {
+            }}
+            .summary-box {{
                 background: white;
                 padding: 30px;
                 border-radius: 16px;
                 box-shadow: 0 8px 30px rgba(0,0,0,0.04);
                 margin-bottom: 30px;
                 border: 1px solid #E2E8F0;
-            }
-            .summary-box h1 { margin-top: 0; font-size: 24px; font-weight: 800; color: #006699; }
+            }}
+            .summary-box h1 {{ margin-top: 0; font-size: 24px; font-weight: 800; color: #006699; }}
             .stats {{
                 display: flex;
                 gap: 20px;
@@ -686,14 +686,14 @@ def generate_master_html_report(all_results: list) -> bytes:
                 text-align: center;
             }}
             .stat-val {{ font-size: 32px; font-weight: bold; color: #e6a23c; display: block; }}
-            .url-details {
+            .url-details {{
                 background: white;
                 margin-bottom: 15px;
                 border-radius: 12px;
                 box-shadow: 0 4px 20px rgba(0,0,0,0.03);
                 overflow: hidden;
                 border: 1px solid #E2E8F0;
-            }
+            }}
             .url-summary {{
                 padding: 20px;
                 cursor: pointer;
