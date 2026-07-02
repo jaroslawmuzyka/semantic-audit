@@ -52,12 +52,10 @@ st.markdown("Audyt semantyczny treści za pomocą Jina, Nodeshub i OpenAI.")
 
 # Sidebar Settings
 with st.sidebar:
-    st.header("Ustawienia Zaawansowane")
+    st.header("Ustawienia zaawansowane")
     selected_model = st.selectbox("Model OpenAI", ["gpt-4o", "chatgpt-4o-latest", "gpt-4-turbo", "gpt-4o-mini", "gpt-5.4-mini", "gpt-5-mini", "gpt-5.4-nano"], index=4)
-    
-    jina_remove_selectors = st.text_input("Wyklucz selektory w JINA (np. header, .class)", placeholder="header, .cky-consent-container, #footer")
-    jina_target_selectors = st.text_input("Celuj w selektory w JINA (X-Target-Selector)", placeholder="body, .class, #id")
-
+    jina_remove_selectors = st.text_input("Usuń selektory przed analizą (JINA)", value=".cky-consent-container")
+    jina_target_selectors = st.text_input("Celuj w selektory w JINA (X-Target-Selector)", value="body, .class, #id")
     
     with st.expander("Edytuj Prompty Systemowe", expanded=False):
         prompt_gap_analysis = st.text_area(
@@ -151,6 +149,7 @@ with tab1:
                     
                     source_content = source_data.get("data", {}).get("content", "")
                     st.session_state.source_content = source_content
+                    st.session_state.source_title = source_data.get("data", {}).get("title", "Raport Audytu AI")
                     st.session_state.audit_step = 1
                     status.update(label="Krok 1: Zakończono.", state="complete", expanded=False)
                     st.rerun()
@@ -226,7 +225,7 @@ with tab1:
 
             with st.status("Krok 7: XLSX i HTML...", expanded=True) as status:
                 excel_bytes = generate_excel_report(gap_analysis, scores, report, source_content, consolidated_competitors)
-                html_bytes = generate_single_html_report(url_input, keyword_input, gap_analysis, scores, report)
+                html_bytes = generate_single_html_report(url_input, st.session_state.get("source_title", "Raport Audytu AI"), keyword_input, gap_analysis, scores, report)
                 status.update(label="Krok 7: Gotowy.", state="complete", expanded=False)
                 
             progress_bar.progress(100)
@@ -260,10 +259,9 @@ with tab1:
         st.divider()
         st.subheader("📊 Wyniki Audytu")
         
-        col_cqs, col_ai, col_cost = st.columns(3)
+        col_cqs, col_ai = st.columns(2)
         col_cqs.metric("Content Quality Score (CQS)", f"{report.cqs_score}/100")
         col_ai.metric("AI Citability Score", f"{report.ai_citability_score}/10")
-        col_cost.metric("Koszt Analizy", f"${st.session_state.total_cost:.4f}", f"{st.session_state.total_tokens['in']} in / {st.session_state.total_tokens['out']} out tokens")
         
         st.markdown("### Executive Summary")
         st.write(report.executive_summary)
@@ -445,6 +443,7 @@ with tab2:
                         total_in, total_out = 0, 0
                         source_content = st.session_state.mass_jina_content
                         consolidated_competitors = ""
+                        title = source_data.get("data", {}).get("title", "Raport Audytu AI")
                         
                         if keyword and keyword.strip() != "":
                             serp_data = search(keyword, hl=mass_hl, gl=mass_gl)
@@ -469,7 +468,7 @@ with tab2:
                         filename = f"audit_{idx+1}_{url.split('//')[-1].split('/')[0]}.xlsx".replace("www.", "")
                         st.session_state.mass_files[filename] = excel_bytes
                         
-                        html_bytes = generate_single_html_report(url, keyword, gap_analysis, scores, report)
+                        html_bytes = generate_single_html_report(url, title, keyword, gap_analysis, scores, report)
                         filename_html = f"audit_{idx+1}_{url.split('//')[-1].split('/')[0]}.html".replace("www.", "")
                         st.session_state.mass_files[filename_html] = html_bytes
                         url_cost = (total_in / 1_000_000) * p_cost["in"] + (total_out / 1_000_000) * p_cost["out"]
@@ -521,6 +520,7 @@ with tab2:
                     
                     total_in, total_out = 0, 0
                     consolidated_competitors = ""
+                    title = source_data.get("data", {}).get("title", "Raport Audytu AI")
                     
                     if keyword and keyword.strip() != "":
                         serp_data = search(keyword, hl=mass_hl, gl=mass_gl)
@@ -545,7 +545,7 @@ with tab2:
                     filename = f"audit_{idx+1}_{url.split('//')[-1].split('/')[0]}.xlsx".replace("www.", "")
                     st.session_state.mass_files[filename] = excel_bytes
                     
-                    html_bytes = generate_single_html_report(url, keyword, gap_analysis, scores, report)
+                    html_bytes = generate_single_html_report(url, title, keyword, gap_analysis, scores, report)
                     filename_html = f"audit_{idx+1}_{url.split('//')[-1].split('/')[0]}.html".replace("www.", "")
                     st.session_state.mass_files[filename_html] = html_bytes
                     url_cost = (total_in / 1_000_000) * p_cost["in"] + (total_out / 1_000_000) * p_cost["out"]

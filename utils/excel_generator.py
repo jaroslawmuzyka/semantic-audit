@@ -149,9 +149,6 @@ def generate_master_excel_report(all_results: list) -> bytes:
             "Fraza": keyword,
             "CQS Score": r.cqs_score,
             "AI Citability": r.ai_citability_score,
-            "Koszt ($)": cost,
-            "Tokens IN": t_in,
-            "Tokens OUT": t_out,
             "Executive Summary": r.executive_summary,
             "Missing TF-IDF": ", ".join(s.missing_tf_idf_terms) if s.missing_tf_idf_terms else ""
         }
@@ -182,9 +179,6 @@ def generate_master_excel_report(all_results: list) -> bytes:
             "Fraza": keyword,
             "CQS Score": r.cqs_score,
             "AI Citability": r.ai_citability_score,
-            "Koszt ($)": cost,
-            "Tokens IN": t_in,
-            "Tokens OUT": t_out,
             "Executive Summary": r.executive_summary,
             "Missing TF-IDF": row_full["Missing TF-IDF"]
         }
@@ -219,7 +213,6 @@ def generate_master_excel_report(all_results: list) -> bytes:
             "URL": url,
             "Fraza": keyword,
             "CQS Score": r.cqs_score,
-            "Koszt ($)": cost,
             "KRYTYCZNE Rekomendacje": "\n\n".join(crit) if crit else "Brak",
             "WYSOKIE Rekomendacje": "\n\n".join(high) if high else "Brak",
             "ŚREDNIE Rekomendacje": "\n\n".join(med) if med else "Brak",
@@ -258,10 +251,7 @@ def generate_master_excel_report(all_results: list) -> bytes:
         {"Metryka": "Zbadane adresy URL", "Wartość": total_articles},
         {"Metryka": "Średni wynik CQS", "Wartość": avg_cqs},
         {"Metryka": "Artykuły bardzo dobre (>=80)", "Wartość": excellent_count},
-        {"Metryka": "Artykuły do poprawy (<80)", "Wartość": needs_improvement_count},
-        {"Metryka": "Łączny koszt audytu masowego ($)", "Wartość": round(total_cost, 4)},
-        {"Metryka": "Łączne zużycie tokenów (IN)", "Wartość": total_tokens_in},
-        {"Metryka": "Łączne zużycie tokenów (OUT)", "Wartość": total_tokens_out}
+        {"Metryka": "Artykuły do poprawy (<80)", "Wartość": needs_improvement_count}
     ]
         
     df_full = pd.DataFrame(full_data)

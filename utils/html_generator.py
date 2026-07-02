@@ -2,7 +2,7 @@ import json
 import io
 from utils.openai_llm import GapAnalysisResult, ContentScores, AuditReport
 
-def generate_single_html_report(url: str, keyword: str, gap_analysis: GapAnalysisResult, scores: ContentScores, report: AuditReport) -> bytes:
+def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis: GapAnalysisResult, scores: ContentScores, report: AuditReport) -> bytes:
     labels = []
     data_points = []
     
@@ -43,7 +43,7 @@ def generate_single_html_report(url: str, keyword: str, gap_analysis: GapAnalysi
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Audyt SEO AI - {url}</title>
+        <title>{title}</title>
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -248,7 +248,7 @@ def generate_single_html_report(url: str, keyword: str, gap_analysis: GapAnalysi
     <body>
         <div class="container">
             <div class="header">
-                <h1>Raport Audytu AI</h1>
+                <h1>{title}</h1>
                 <p><strong>URL:</strong> <a href="{url}" target="_blank" style="color: #409eff; text-decoration: none;">{url}</a> | <strong>Fraza:</strong> {keyword}</p>
             </div>
             
@@ -277,9 +277,6 @@ def generate_single_html_report(url: str, keyword: str, gap_analysis: GapAnalysi
                             <em>Profil audytu: Audyt Semantyczny - wagi i kryteria dostosowane do typu treści.</em><br><br>
                             <strong>Podsumowanie Executive:</strong> {report.executive_summary}
                         </div>
-                        
-                        <div class="quick-wins-title">QUICK WINS ({crit_high_count})</div>
-                        {quick_wins_html}
                     </div>
                 </div>
                 
@@ -289,6 +286,11 @@ def generate_single_html_report(url: str, keyword: str, gap_analysis: GapAnalysi
                         <canvas id="radarChart"></canvas>
                     </div>
                 </div>
+            </div>
+            
+            <div class="summary-card" style="margin-bottom: 20px;">
+                <div class="quick-wins-title">QUICK WINS ({crit_high_count})</div>
+                {quick_wins_html}
             </div>
             
             <div class="details-section">
@@ -304,8 +306,90 @@ def generate_single_html_report(url: str, keyword: str, gap_analysis: GapAnalysi
         </div>
         """
         
-    html_content += f"""
+    html_content += "</div>"
+    
+    # EAV Matrix HTML
+    html_content += """
+    <div class="details-section">
+        <h2>Matrix EAV (Entity-Attribute-Value)</h2>
+        <div style="overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px;">
+            <thead>
+                <tr style="background-color: #f8f9fa; border-bottom: 2px solid #ebeef5;">
+                    <th style="padding: 10px; text-align: left;">Atrybut</th>
+                    <th style="padding: 10px; text-align: left;">Typ</th>
+                    <th style="padding: 10px; text-align: left;">Pokrycie</th>
+                    <th style="padding: 10px; text-align: left;">Priorytet</th>
+                    <th style="padding: 10px; text-align: left;">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+    """
+    for e in gap_analysis.eav_matrix:
+        html_content += f"""
+        <tr style="border-bottom: 1px solid #ebeef5;">
+            <td style="padding: 10px;">{e.attribute}</td>
+            <td style="padding: 10px;">{e.urr_type}</td>
+            <td style="padding: 10px;">{e.coverage}</td>
+            <td style="padding: 10px;">{e.priority}</td>
+            <td style="padding: 10px;">{e.status}</td>
+        </tr>
+        """
+    html_content += """
+            </tbody>
+        </table>
+        </div>
+    </div>
+    """
+
+    # Target H2 Structure HTML
+    html_content += """
+    <div class="details-section">
+        <h2>Rekomendowana Struktura Nagłówków (H2) i BLUF</h2>
+    """
+    if report.target_structure_h2:
+        h2s = report.target_structure_h2
+        blufs = report.bluf_per_h2 if report.bluf_per_h2 else []
+        for i in range(max(len(h2s), len(blufs))):
+            h2 = h2s[i] if i < len(h2s) else ""
+            bluf = blufs[i] if i < len(blufs) else ""
+            html_content += f"""
+            <div style="margin-bottom: 15px; padding: 15px; background: #fafbfc; border-left: 4px solid #409eff; border-radius: 4px;">
+                <strong style="font-size: 16px;">{h2}</strong><br>
+                <span style="color: #666; font-size: 14px; display: inline-block; margin-top: 5px;"><strong>BLUF:</strong> {bluf}</span>
             </div>
+            """
+    else:
+        html_content += "<p style='color: #666;'>Brak specyficznych rekomendacji H2.</p>"
+    html_content += "</div>"
+
+    # EEAT and TF-IDF HTML
+    eeat_miss = []
+    for e in scores.eeat_signals:
+        if e.missing_signals and e.missing_signals.strip() != "":
+            eeat_miss.append(f"[{e.dimension}]: {e.missing_signals}")
+            
+    tf_idf = ", ".join(scores.missing_tf_idf_terms) if hasattr(scores, 'missing_tf_idf_terms') and scores.missing_tf_idf_terms else "Brak"
+    
+    html_content += f"""
+    <div class="details-section">
+        <h2>Sygnały E-E-A-T i Brakujące Frazy (TF-IDF)</h2>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div>
+                <h4 style="margin-top: 0; color: #2c3e50;">Braki E-E-A-T</h4>
+                <ul style="padding-left: 20px; color: #666; font-size: 14px;">
+                    {''.join([f'<li>{e}</li>' for e in eeat_miss]) if eeat_miss else '<li>Brak istotnych braków w sygnałach E-E-A-T.</li>'}
+                </ul>
+            </div>
+            <div>
+                <h4 style="margin-top: 0; color: #2c3e50;">Brakujące powiązane frazy (TF-IDF)</h4>
+                <p style="color: #666; font-size: 14px; line-height: 1.6;">{tf_idf}</p>
+            </div>
+        </div>
+    </div>
+    """
+
+    html_content += f"""
         </div>
 
         <script>
@@ -369,6 +453,7 @@ def generate_master_html_report(all_results: list) -> bytes:
         url = item.get("url", "")
         keyword = item.get("keyword", "")
         r = item.get("report")
+        s = item.get("scores")
         
         if not r:
             continue
@@ -383,26 +468,65 @@ def generate_master_html_report(all_results: list) -> bytes:
             needs_improvement_count += 1
             badge = "<span style='color: #e6a23c; font-weight: bold;'>Uwaga</span>"
             
+        ai_badge_color = "#67c23a" if r.ai_citability_score >= 8 else "#e6a23c"
+        
+        crit = [f"<li><strong>[{rec.title}]</strong><br><span style='color:#666;font-size:13px;'>Przed: {rec.before_quote}<br>Po: {rec.after_generated}</span></li>" for rec in r.recommendations if rec.priority.upper() == "KRYTYCZNE"]
+        high = [f"<li><strong>[{rec.title}]</strong><br><span style='color:#666;font-size:13px;'>Przed: {rec.before_quote}<br>Po: {rec.after_generated}</span></li>" for rec in r.recommendations if rec.priority.upper() == "WYSOKIE"]
+        med  = [f"<li><strong>[{rec.title}]</strong><br><span style='color:#666;font-size:13px;'>Przed: {rec.before_quote}<br>Po: {rec.after_generated}</span></li>" for rec in r.recommendations if rec.priority.upper() == "ŚREDNIE"]
+        
+        h2s = r.target_structure_h2 if r.target_structure_h2 else []
+        blufs = r.bluf_per_h2 if r.bluf_per_h2 else []
+        structure = []
+        for i in range(max(len(h2s), len(blufs))):
+            h2 = h2s[i] if i < len(h2s) else ""
+            bluf = blufs[i] if i < len(blufs) else ""
+            structure.append(f"<li><strong>{h2}</strong> (BLUF: {bluf})</li>")
+            
+        eeat_miss = []
+        if s and hasattr(s, "eeat_signals"):
+            for e in s.eeat_signals:
+                if e.missing_signals and e.missing_signals.strip() != "":
+                    eeat_miss.append(f"<li>[{e.dimension}]: {e.missing_signals}</li>")
+                    
+        tf_idf = ", ".join(s.missing_tf_idf_terms) if s and hasattr(s, 'missing_tf_idf_terms') and s.missing_tf_idf_terms else "Brak"
+        
         rows_html += f"""
         <details class="url-details">
             <summary class="url-summary">
                 <div class="sum-row">
                     <span class="s-url">{url}</span>
-                    <span class="s-score">CQS: {r.cqs_score}/100 ({badge})</span>
+                    <span class="s-score">CQS: {r.cqs_score}/100 ({badge}) | AI Cit: <span style="color:{ai_badge_color}">{r.ai_citability_score}/10</span></span>
                 </div>
             </summary>
             <div class="details-content">
                 <p><strong>Fraza:</strong> {keyword}</p>
                 <p><strong>Executive Summary:</strong> {r.executive_summary}</p>
-                <h4>Rekomendacje (Quick Wins):</h4>
-                <ul>
-        """
-        for rec in r.recommendations:
-            if rec.priority.upper() in ["KRYTYCZNE", "WYSOKIE"]:
-                rows_html += f"<li><strong>{rec.priority}:</strong> {rec.title} (+{rec.impact_cqs})</li>"
-        
-        rows_html += """
-                </ul>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div>
+                        <h4>Rekomendacje:</h4>
+                        <ul style="font-size: 14px;">
+                            {''.join(crit) if crit else ''}
+                            {''.join(high) if high else ''}
+                            {''.join(med) if med else ''}
+                            {'' if not (crit or high or med) else ''}
+                        </ul>
+                    </div>
+                    <div>
+                        <h4>Docelowa Struktura H2:</h4>
+                        <ul style="font-size: 14px;">
+                            {''.join(structure) if structure else '<li>Brak</li>'}
+                        </ul>
+                        
+                        <h4>Braki E-E-A-T:</h4>
+                        <ul style="font-size: 14px;">
+                            {''.join(eeat_miss) if eeat_miss else '<li>Brak</li>'}
+                        </ul>
+                        
+                        <h4>Brakujące Słowa (TF-IDF):</h4>
+                        <p style="font-size: 14px; color: #666;">{tf_idf}</p>
+                    </div>
+                </div>
             </div>
         </details>
         """
