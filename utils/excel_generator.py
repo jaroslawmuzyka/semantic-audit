@@ -239,23 +239,7 @@ def generate_master_excel_report(all_results: list) -> bytes:
             
         full_data.append(row_full)
         
-        # --- 2. SHORT ROW (Bez Ocen) ---
-        row_short = {
-            "URL": url,
-            "Fraza": keyword,
-            "CQS Score": r.cqs_score,
-            "AI Citability": r.ai_citability_score,
-            "Executive Summary": r.executive_summary,
-            "Missing TF-IDF": row_full["Missing TF-IDF"]
-        }
-        for i, rec in enumerate(r.recommendations):
-            row_short[f"Rec {i+1} Priority"] = rec.priority
-            row_short[f"Rec {i+1} Title"] = rec.title
-            row_short[f"Rec {i+1} Impact"] = f"+{rec.impact_cqs}"
-            row_short[f"Rec {i+1} BEFORE"] = rec.before_quote
-            row_short[f"Rec {i+1} AFTER"] = rec.after_generated
-            
-        short_data.append(row_short)
+        
         
         # --- 3. ACTIONABLE ROW ---
         crit = [f"[- {rec.title} -]\nZmień z:\n{rec.before_quote}\nNa:\n{rec.after_generated}" for rec in r.recommendations if rec.priority.upper() == "KRYTYCZNE"]
