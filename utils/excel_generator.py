@@ -2,6 +2,66 @@ import pandas as pd
 import io
 import zipfile
 from utils.openai_llm import GapAnalysisResult, ContentScores, AuditReport
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
+
+def apply_premium_formatting(writer):
+    # Premium navy header
+    header_font = Font(name='Manrope', bold=True, color='FFFFFF')
+    header_fill = PatternFill(start_color='003366', end_color='003366', fill_type='solid')
+    align_top = Alignment(vertical='top', wrap_text=True)
+    align_center = Alignment(horizontal='center', vertical='center')
+
+    for sheet_name in writer.sheets:
+        ws = writer.sheets[sheet_name]
+        
+        # Freeze top row
+        ws.freeze_panes = "A2"
+        
+        # Remove gridlines for Podsumowanie
+        if sheet_name in ["Summary & CQS", "Podsumowanie"]:
+            ws.sheet_view.showGridLines = False
+
+        # Style headers and set column widths
+        for col_idx, column in enumerate(ws.columns, 1):
+            col_letter = get_column_letter(col_idx)
+            header_cell = column[0]
+            header_cell.font = header_font
+            header_cell.fill = header_fill
+            header_cell.alignment = align_center
+            
+            # Apply wrapping to all body cells
+            max_len = 0
+            for cell in column:
+                if cell.row > 1:
+                    cell.alignment = align_top
+                    
+                # Colorize CQS Score if it exists
+                if header_cell.value == "CQS Score" or header_cell.value == "CQS" or header_cell.value == "Wynik CQS":
+                    if cell.row > 1 and isinstance(cell.value, (int, float)):
+                        if cell.value >= 80:
+                            cell.fill = PatternFill(start_color='E8F5E9', end_color='E8F5E9', fill_type='solid')
+                        elif cell.value < 50:
+                            cell.fill = PatternFill(start_color='FFEBEE', end_color='FFEBEE', fill_type='solid')
+                        else:
+                            cell.fill = PatternFill(start_color='FFF8E1', end_color='FFF8E1', fill_type='solid')
+
+                try:
+                    val_str = str(cell.value)
+                    # Use a cap for max length to avoid too wide columns
+                    line_len = max([len(line) for line in val_str.split('\\n')])
+                    if line_len > max_len:
+                        max_len = line_len
+                except:
+                    pass
+            
+            # Smart width adjustment
+            if max_len > 80:
+                ws.column_dimensions[col_letter].width = 80
+            elif max_len > 15:
+                ws.column_dimensions[col_letter].width = max_len + 2
+            else:
+                ws.column_dimensions[col_letter].width = 15
 
 def generate_excel_report(gap_analysis: GapAnalysisResult, scores: ContentScores, report: AuditReport, source_content: str, consolidated_competitors: str) -> bytes:
     output = io.BytesIO()
@@ -100,6 +160,8 @@ def generate_excel_report(gap_analysis: GapAnalysisResult, scores: ContentScores
         # Sheet 9: Raw Competitors Content
         df_comps = pd.DataFrame({"Consolidated Competitors Content": [consolidated_competitors]})
         df_comps.to_excel(writer, sheet_name="Raw Competitors Content", index=False)
+        
+        apply_premium_formatting(writer)
         
     output.seek(0)
     return output.getvalue()
@@ -267,6 +329,8 @@ def generate_master_excel_report(all_results: list) -> bytes:
         df_short.to_excel(writer, sheet_name="Skrócony (Bez Ocen)", index=False)
         df_eav.to_excel(writer, sheet_name="Zbiorczy Matrix EAV", index=False)
         df_full.to_excel(writer, sheet_name="Pełny Raport", index=False)
+        
+        apply_premium_formatting(writer)
     
     output.seek(0)
     return output.getvalue()
