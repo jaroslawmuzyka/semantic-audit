@@ -80,6 +80,8 @@ def analyze_competitor_gaps(topic, consolidated_competitors, model_name, system_
     Analyze the top 10 competitors for the topic: "{topic}".
     Extract Entity-Attribute-Value (EAV) triplets.
     Classify each attribute as UNIQUE (1-2/10), ROOT (5+/10), or RARE (3-4/10).
+    Specify `coverage` as a descriptive fraction (np. "8/10 konkurentów to posiada").
+    Specify `status` strictly as one of: COVERED (jeśli nasz tekst o tym mówi), GAP (jeśli nam tego brakuje), UNIQUE (jeśli tylko my to mamy).
     Identify content gaps assuming we are planning an article about this topic.
     
     Competitor Content:
@@ -134,7 +136,7 @@ def generate_audit_report(source_article, gap_analysis: GapAnalysisResult, score
     Generate a final actionable audit report.
     Calculate CQS (0-100) and AI Citability (0-10).
     Provide prioritized recommendations (KRYTYCZNE, WYSOKIE, ŚREDNIE) with BEFORE/AFTER examples.
-    Generate a target H2 structure and BLUF (Bottom Line Up Front) sentences.
+    Generate a target headings structure (H1, H2, H3) and BLUF (Bottom Line Up Front) sentences.
     
     Scores Data:
     {scores.model_dump_json()}

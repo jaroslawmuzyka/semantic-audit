@@ -69,7 +69,7 @@ def generate_excel_report(gap_analysis: GapAnalysisResult, scores: ContentScores
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         # Sheet 1: Executive Summary
         summary_data = {
-            "Metric": ["CQS Score", "AI Citability Score", "Executive Summary"],
+            "Metric": ["CQS Score", "AI Citability Score", "Podsumowanie"],
             "Value": [report.cqs_score, report.ai_citability_score, report.executive_summary]
         }
         df_summary = pd.DataFrame(summary_data)
@@ -137,12 +137,12 @@ def generate_excel_report(gap_analysis: GapAnalysisResult, scores: ContentScores
         
         # Sheet 6: Action Plan
         action_plan_data = {
-            "Target H2 Structure": report.target_structure_h2,
+            "Docelowa Struktura Nagłówków": report.target_structure_h2,
             "Suggested BLUF (First Sentence)": report.bluf_per_h2 + [""] * (len(report.target_structure_h2) - len(report.bluf_per_h2)) 
         }
         # Pad with empty strings if lengths don't match
         max_len = max(len(report.target_structure_h2), len(report.bluf_per_h2))
-        action_plan_data["Target H2 Structure"].extend([""] * (max_len - len(action_plan_data["Target H2 Structure"])))
+        action_plan_data["Docelowa Struktura Nagłówków"].extend([""] * (max_len - len(action_plan_data["Docelowa Struktura Nagłówków"])))
         action_plan_data["Suggested BLUF (First Sentence)"].extend([""] * (max_len - len(action_plan_data["Suggested BLUF (First Sentence)"])))
         
         df_action = pd.DataFrame(action_plan_data)
@@ -167,12 +167,15 @@ def generate_excel_report(gap_analysis: GapAnalysisResult, scores: ContentScores
     return output.getvalue()
 
 def generate_master_excel_report(all_results: list) -> bytes:
+    # Sort results by CQS score ascending
+    sorted_results = sorted(all_results, key=lambda x: x.get("report").cqs_score if x.get("report") else 100)
+    
     full_data = []
-    short_data = []
     action_data = []
     eav_data = []
     
     total_cqs = 0
+    total_ai = 0
     excellent_count = 0
     needs_improvement_count = 0
     total_articles = 0
@@ -180,7 +183,7 @@ def generate_master_excel_report(all_results: list) -> bytes:
     total_tokens_in = 0
     total_tokens_out = 0
     
-    for item in all_results:
+    for item in sorted_results:
         url = item.get("url", "")
         keyword = item.get("keyword", "")
         r = item.get("report")
@@ -196,6 +199,7 @@ def generate_master_excel_report(all_results: list) -> bytes:
             
         total_articles += 1
         total_cqs += r.cqs_score
+        total_ai += r.ai_citability_score
         total_cost += cost
         total_tokens_in += t_in
         total_tokens_out += t_out
@@ -275,10 +279,12 @@ def generate_master_excel_report(all_results: list) -> bytes:
             "URL": url,
             "Fraza": keyword,
             "CQS Score": r.cqs_score,
+            "AI Citability": r.ai_citability_score,
+            "Podsumowanie": r.executive_summary,
             "KRYTYCZNE Rekomendacje": "\n\n".join(crit) if crit else "Brak",
             "WYSOKIE Rekomendacje": "\n\n".join(high) if high else "Brak",
             "ŚREDNIE Rekomendacje": "\n\n".join(med) if med else "Brak",
-            "Docelowa Struktura H2": "\n\n".join(structure) if structure else "Brak",
+            "Docelowa Struktura Nagłówków": "\n\n".join(structure) if structure else "Brak",
             "Braki E-E-A-T": "\n".join(eeat_miss) if eeat_miss else "Brak",
             "Brakujące Słowa (TF-IDF)": row_full["Missing TF-IDF"]
         }
@@ -306,18 +312,19 @@ def generate_master_excel_report(all_results: list) -> bytes:
             
     # --- 5. PODSUMOWANIE ---
     avg_cqs = round(total_cqs / total_articles, 2) if total_articles > 0 else 0
+    avg_ai = round(total_ai / total_articles, 2) if total_articles > 0 else 0
     summary_text = f"Sprawdzono {total_articles} artykułów. {excellent_count} z nich ma ocenę bardzo dobrą (CQS >= 80), {needs_improvement_count} jest do poprawy (CQS < 80). Średnia ilość punktów CQS to {avg_cqs}."
     
     summary_data = [
         {"Metryka": "Podsumowanie", "Wartość": summary_text},
         {"Metryka": "Zbadane adresy URL", "Wartość": total_articles},
         {"Metryka": "Średni wynik CQS", "Wartość": avg_cqs},
+        {"Metryka": "Średni wynik AI Citability", "Wartość": avg_ai},
         {"Metryka": "Artykuły bardzo dobre (>=80)", "Wartość": excellent_count},
         {"Metryka": "Artykuły do poprawy (<80)", "Wartość": needs_improvement_count}
     ]
         
     df_full = pd.DataFrame(full_data)
-    df_short = pd.DataFrame(short_data)
     df_action = pd.DataFrame(action_data)
     df_eav = pd.DataFrame(eav_data)
     df_summary = pd.DataFrame(summary_data)
@@ -326,7 +333,6 @@ def generate_master_excel_report(all_results: list) -> bytes:
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_summary.to_excel(writer, sheet_name="Podsumowanie", index=False)
         df_action.to_excel(writer, sheet_name="Rekomendacje (Actionable)", index=False)
-        df_short.to_excel(writer, sheet_name="Skrócony (Bez Ocen)", index=False)
         df_eav.to_excel(writer, sheet_name="Zbiorczy Matrix EAV", index=False)
         df_full.to_excel(writer, sheet_name="Pełny Raport", index=False)
         

@@ -396,12 +396,12 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
     </div>
     """
 
-    # Target H2 Structure HTML
-    html_content += """
-    <div class="details-section">
-        <h2>Rekomendowana Struktura Nagłówków (H2) i BLUF</h2>
-    """
+    # Target Structure HTML
     if report.target_structure_h2:
+        html_content += f"""
+        <div class="details-section">
+            <h2>Docelowa Struktura Nagłówków (H1-H3) i BLUF</h2>
+        """
         h2s = report.target_structure_h2
         blufs = report.bluf_per_h2 if report.bluf_per_h2 else []
         for i in range(max(len(h2s), len(blufs))):
@@ -414,7 +414,7 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
             </div>
             """
     else:
-        html_content += "<p style='color: #666;'>Brak specyficznych rekomendacji H2.</p>"
+        html_content += "<p style='color: #666;'>Brak specyficznych rekomendacji dla nagłówków.</p>"
     html_content += "</div>"
 
     # EEAT and TF-IDF HTML
@@ -497,6 +497,9 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
 
 
 def generate_master_html_report(all_results: list) -> bytes:
+    # Sort results by CQS score ascending
+    sorted_results = sorted(all_results, key=lambda x: x.get("report").cqs_score if x.get("report") else 100)
+    
     WSTEP_HTML = """
     <details class="wstep-details" style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); border-left: 4px solid #003366;">
         <summary style="font-size: 18px; font-weight: 600; cursor: pointer; color: #003366;">Wstęp i definicje (Rozwiń)</summary>
@@ -519,7 +522,7 @@ def generate_master_html_report(all_results: list) -> bytes:
             <li><strong>Central Search Intent (CSI):</strong> To matematyczne połączenie tematu (Encji) z kontekstem źródła. Algorytm musi wiedzieć, z jakiej perspektywy opisujesz temat.</li>
             <li><strong>Entity-Attribute-Value (EAV):</strong> Google dąży do wyekstrahowania z tekstu "suchych faktów" i zapisania ich w tabeli (Grafie Wiedzy). Sprawdzimy, czy Twój tekst to "lita ściana tekstu", czy ustrukturyzowana baza wiedzy.</li>
             <li><strong>BLUF (Bottom Line Up Front):</strong> Najważniejsza informacja musi znaleźć się na początku. Google i AI często skanują tylko początek sekcji.</li>
-            <li><strong>CHUNK (Fragmentacja pod RAG):</strong> Każda sekcja pod nagłówkiem H2 powinna być samodzielną, wyczerpującą odpowiedzią na dany problem.</li>
+            <li><strong>CHUNK (Fragmentacja pod RAG):</strong> Każda sekcja pod nagłówkiem powinna być samodzielną, wyczerpującą odpowiedzią na dany problem.</li>
             <li><strong>URR (Unique, Root, Rare):</strong> Aby content był uznany za wybitny, musisz ułożyć atrybuty encji w odpowiedniej hierarchii (definiujące, wyróżniające, niszowe).</li>
             </ul>
 
@@ -558,7 +561,7 @@ def generate_master_html_report(all_results: list) -> bytes:
     
     rows_html = ""
     
-    for item in all_results:
+    for item in sorted_results:
         url = item.get("url", "")
         keyword = item.get("keyword", "")
         r = item.get("report")
@@ -608,7 +611,7 @@ def generate_master_html_report(all_results: list) -> bytes:
             </summary>
             <div class="details-content">
                 <p><strong>Fraza:</strong> {keyword}</p>
-                <p><strong>Executive Summary:</strong> {r.executive_summary}</p>
+                <p><strong>Podsumowanie:</strong> {r.executive_summary}</p>
                 
                 <div class="card-grid">
                     <div class="data-card">
@@ -621,7 +624,7 @@ def generate_master_html_report(all_results: list) -> bytes:
                         </ul>
                     </div>
                     <div class="data-card">
-                        <h4>Docelowa Struktura H2:</h4>
+                        <h4>Docelowa Struktura Nagłówków:</h4>
                         <ul class="data-list">
                             {''.join(structure) if structure else '<li>Brak</li>'}
                         </ul>
@@ -696,25 +699,25 @@ def generate_master_html_report(all_results: list) -> bytes:
             }}
             .url-summary {{
                 padding: 20px;
+                padding-left: 45px;
                 cursor: pointer;
                 font-weight: 500;
                 list-style: none;
                 position: relative;
-                padding-right: 40px;
             }}
             .url-summary::-webkit-details-marker {{ display: none; }}
-            .url-summary::after {{
-                content: '▼';
+            .url-summary::before {{
+                content: '▶';
                 position: absolute;
-                right: 20px;
+                left: 20px;
                 top: 50%;
                 transform: translateY(-50%);
-                color: #409eff;
+                color: #006699;
                 transition: transform 0.2s ease;
-                font-size: 12px;
+                font-size: 14px;
             }}
-            .url-details[open] .url-summary::after {{
-                transform: translateY(-50%) rotate(180deg);
+            .url-details[open] .url-summary::before {{
+                transform: translateY(-50%) rotate(90deg);
             }}
             .sum-row {{
                 display: flex;

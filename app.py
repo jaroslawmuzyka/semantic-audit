@@ -70,7 +70,7 @@ with st.sidebar:
         )
         prompt_report = st.text_area(
             "Krok 6: Raport i Rekomendacje", 
-            value="Jesteś głównym strategiem treści. Na bazie surowych wyników wygeneruj profesjonalny raport audytu.\n1. BEFORE/AFTER: Stwórz ulepszoną wersję każdego problematycznego fragmentu (AFTER).\n2. SRL transformacje: Przekształć zdania z Patient na Agent.\n3. Struktura docelowa: H1/H2/H3 z oznaczeniami [OK]/[ZMIEŃ]/[NOWA] + jednozdaniowy BLUF dla każdego H2.\n4. E-E-A-T: Wygeneruj gotowe bloki tekstu (Bio, disclaimer, data).\n5. Rekomendacje z priorytetami:\n- KRYTYCZNE: Wysoki wpływ, Niski wysiłek\n- WYSOKIE: Wysoki wpływ, Średni wysiłek\n- ŚREDNIE: Wysoki wpływ, Wysoki wysiłek\nOblicz CQS (Content Quality Score) na podstawie ocen cząstkowych i podaj szacowany wpływ (+pkt) dla każdej rekomendacji.",
+            value="Jesteś głównym strategiem treści. Na bazie surowych wyników wygeneruj profesjonalny raport audytu.\n1. BEFORE/AFTER: Stwórz ulepszoną wersję każdego problematycznego fragmentu (AFTER).\n2. SRL transformacje: Przekształć zdania z Patient na Agent.\n3. Struktura docelowa: używaj tagów [H1], [H2], [H3] (zamiast znaków #) z oznaczeniami [OK]/[ZMIEŃ]/[NOWA] + jednozdaniowy BLUF dla każdego nagłówka.\n4. E-E-A-T: Wygeneruj gotowe bloki tekstu (Bio, disclaimer, data).\n5. Rekomendacje z priorytetami:\n- KRYTYCZNE: Wysoki wpływ, Niski wysiłek\n- WYSOKIE: Wysoki wpływ, Średni wysiłek\n- ŚREDNIE: Wysoki wpływ, Wysoki wysiłek\nOblicz CQS (Content Quality Score) na podstawie ocen cząstkowych i podaj szacowany wpływ (+pkt) dla każdej rekomendacji.",
             height=250
         )
         
@@ -473,11 +473,12 @@ with tab2:
                         total_in += u.prompt_tokens; total_out += u.completion_tokens
                         
                         excel_bytes = generate_excel_report(gap_analysis, scores, report, source_content, consolidated_competitors)
-                        filename = f"audit_{idx+1}_{url.split('//')[-1].split('/')[0]}.xlsx".replace("www.", "")
+                        safe_url = url.split('//')[-1].replace('/', '_').replace('?', '_')
+                        filename = f"analiza indywidualna/audit_{safe_url}.xlsx"
                         st.session_state.mass_files[filename] = excel_bytes
                         
                         html_bytes = generate_single_html_report(url, title, keyword, gap_analysis, scores, report)
-                        filename_html = f"audit_{idx+1}_{url.split('//')[-1].split('/')[0]}.html".replace("www.", "")
+                        filename_html = f"analiza indywidualna/audit_{safe_url}.html"
                         st.session_state.mass_files[filename_html] = html_bytes
                         url_cost = (total_in / 1_000_000) * p_cost["in"] + (total_out / 1_000_000) * p_cost["out"]
                         st.session_state.mass_results.append({
@@ -496,9 +497,14 @@ with tab2:
                         st.session_state.total_cost += url_cost
                         
                         # Generate partial archives
-                        st.session_state.mass_zip = create_zip_archive(st.session_state.mass_files)
                         st.session_state.mass_master = generate_master_excel_report(st.session_state.mass_results)
                         st.session_state.mass_master_html = generate_master_html_report(st.session_state.mass_results)
+                        
+                        first_domain = st.session_state.mass_results[0]["url"].split('//')[-1].split('/')[0].replace("www.", "")
+                        zip_files = dict(st.session_state.mass_files)
+                        zip_files[f"analiza zbiorcza/master_report_{first_domain}.xlsx"] = st.session_state.mass_master
+                        zip_files[f"analiza zbiorcza/master_report_{first_domain}.html"] = st.session_state.mass_master_html
+                        st.session_state.mass_zip = create_zip_archive(zip_files)
                         
                     except Exception as e:
                         st.error(f"Błąd przy analizie {url}: {e}")
@@ -550,11 +556,12 @@ with tab2:
                     total_in += u.prompt_tokens; total_out += u.completion_tokens
                     
                     excel_bytes = generate_excel_report(gap_analysis, scores, report, source_content, consolidated_competitors)
-                    filename = f"audit_{idx+1}_{url.split('//')[-1].split('/')[0]}.xlsx".replace("www.", "")
+                    safe_url = url.split('//')[-1].replace('/', '_').replace('?', '_')
+                    filename = f"analiza indywidualna/audit_{safe_url}.xlsx"
                     st.session_state.mass_files[filename] = excel_bytes
                     
                     html_bytes = generate_single_html_report(url, title, keyword, gap_analysis, scores, report)
-                    filename_html = f"audit_{idx+1}_{url.split('//')[-1].split('/')[0]}.html".replace("www.", "")
+                    filename_html = f"analiza indywidualna/audit_{safe_url}.html"
                     st.session_state.mass_files[filename_html] = html_bytes
                     url_cost = (total_in / 1_000_000) * p_cost["in"] + (total_out / 1_000_000) * p_cost["out"]
                     st.session_state.mass_results.append({
@@ -574,9 +581,14 @@ with tab2:
                     cost_placeholder.metric("Całkowity Koszt Sesji", f"${st.session_state.total_cost:.4f}", f"{st.session_state.total_tokens['in']} in / {st.session_state.total_tokens['out']} out")
                     
                     # Generate partial archives
-                    st.session_state.mass_zip = create_zip_archive(st.session_state.mass_files)
                     st.session_state.mass_master = generate_master_excel_report(st.session_state.mass_results)
                     st.session_state.mass_master_html = generate_master_html_report(st.session_state.mass_results)
+                    
+                    first_domain = st.session_state.mass_results[0]["url"].split('//')[-1].split('/')[0].replace("www.", "")
+                    zip_files = dict(st.session_state.mass_files)
+                    zip_files[f"analiza zbiorcza/master_report_{first_domain}.xlsx"] = st.session_state.mass_master
+                    zip_files[f"analiza zbiorcza/master_report_{first_domain}.html"] = st.session_state.mass_master_html
+                    st.session_state.mass_zip = create_zip_archive(zip_files)
                     
                 except Exception as e:
                     st.error(f"Błąd przy analizie {url}: {e}")
