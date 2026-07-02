@@ -55,7 +55,7 @@ with st.sidebar:
     st.header("Ustawienia zaawansowane")
     selected_model = st.selectbox("Model OpenAI", ["gpt-4o", "chatgpt-4o-latest", "gpt-4-turbo", "gpt-4o-mini", "gpt-5.4-mini", "gpt-5-mini", "gpt-5.4-nano"], index=4)
     jina_remove_selectors = st.text_input("Usuń selektory przed analizą (JINA)", value=".cky-consent-container")
-    jina_target_selectors = st.text_input("Celuj w selektory w JINA (X-Target-Selector)", value="body, .class, #id")
+    jina_target_selectors = st.text_input("Celuj w selektory w JINA (X-Target-Selector)", value="", placeholder="np. body, .class, #id")
     
     with st.expander("Edytuj Prompty Systemowe", expanded=False):
         prompt_gap_analysis = st.text_area(
