@@ -3,6 +3,58 @@ import io
 from utils.openai_llm import GapAnalysisResult, ContentScores, AuditReport
 
 def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis: GapAnalysisResult, scores: ContentScores, report: AuditReport) -> bytes:
+    WSTEP_HTML = """
+    <details class="wstep-details" style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); border-left: 4px solid #003366;">
+        <summary style="font-size: 18px; font-weight: 600; cursor: pointer; color: #003366;">Wstęp i definicje (Rozwiń)</summary>
+        <div style="margin-top: 20px; font-size: 15px; color: #4a4a4a; line-height: 1.6;">
+            <h3 style="margin-top: 0;">Wstęp do Audytu Semantycznego: Jak Google i AI "czytają" Twoje treści?</h3>
+            <p>Celem tego audytu nie jest tylko sprawdzenie, czy tekst "dobrze się czyta" ludziom. Naszym głównym zadaniem jest dostosowanie treści do sposobu, w jaki analizują ją <strong>algorytmy Google oraz nowoczesne modele AI</strong> (takie jak ChatGPT czy Google AI Overviews).</p>
+            <p>Audyt składa się z <strong>3 głównych filarów</strong>, które sprawdzają treść pod kątem co najmniej 12 kluczowych kryteriów:</p>
+            <ol>
+            <li><strong>Zgodność z Central Search Intent (CSI)</strong> – czy algorytm rozumie, o czym dokładnie piszesz i dla kogo?</li>
+            <li><strong>Jakość treści</strong> – jak kosztowna i trudna w interpretacji jest Twoja strona dla robota?</li>
+            <li><strong>Ocena E-E-A-T</strong> – czy Google uważa Cię za wiarygodnego eksperta?</li>
+            </ol>
+            
+            <hr style="border: 0; border-top: 1px solid #ebeef5; margin: 20px 0;">
+            
+            <h4 style="color: #006699;">1. Zgodność z Central Search Intent (CSI)</h4>
+            <p><em>(Analiza: EAV GAP + BLUF + Chunk + URR)</em><br>
+            Tutaj sprawdzamy, czy Twój artykuł odpowiada na intencję użytkownika i czy jest zbudowany tak, aby maszyna mogła bezbłędnie zidentyfikować temat przewodni.</p>
+            <ul>
+            <li><strong>Central Search Intent (CSI):</strong> To matematyczne połączenie tematu (Encji) z kontekstem źródła. Algorytm musi wiedzieć, z jakiej perspektywy opisujesz temat.</li>
+            <li><strong>Entity-Attribute-Value (EAV):</strong> Google dąży do wyekstrahowania z tekstu "suchych faktów" i zapisania ich w tabeli (Grafie Wiedzy). Sprawdzimy, czy Twój tekst to "lita ściana tekstu", czy ustrukturyzowana baza wiedzy.</li>
+            <li><strong>BLUF (Bottom Line Up Front):</strong> Najważniejsza informacja musi znaleźć się na początku. Google i AI często skanują tylko początek sekcji.</li>
+            <li><strong>CHUNK (Fragmentacja pod RAG):</strong> Każda sekcja pod nagłówkiem H2 powinna być samodzielną, wyczerpującą odpowiedzią na dany problem.</li>
+            <li><strong>URR (Unique, Root, Rare):</strong> Aby content był uznany za wybitny, musisz ułożyć atrybuty encji w odpowiedniej hierarchii (definiujące, wyróżniające, niszowe).</li>
+            </ul>
+
+            <hr style="border: 0; border-top: 1px solid #ebeef5; margin: 20px 0;">
+
+            <h4 style="color: #006699;">2. Jakość treści</h4>
+            <p><em>(Analiza: CoR + Information Density + SRL + TF-IDF)</em><br>
+            W tej sekcji mierzymy efektywność Twojego tekstu. Czy dostarczasz wiedzę szybko i konkretnie, czy zmuszasz Google do "marnowania prądu"?</p>
+            <ul>
+            <li><strong>CoR (Cost of Retrieval):</strong> Wydatek obliczeniowy, jaki wyszukiwarka ponosi na przeczytanie Twojej strony. Google wybierze konkurencję, która dostarczy tę samą wiedzę "taniej".</li>
+            <li><strong>Information Density (Gęstość Informacji):</strong> Stosunek konkretnych faktów do "puchu" (fluff). Im więcej faktów i konkretów, tym wyższa ocena.</li>
+            <li><strong>SRL (Semantic Role Labeling):</strong> To gramatyka dla robotów. Wskazanie: Kto? Co robi? Komu? Należy usuwać stronę bierną, aby Twoja Encja była "Bohaterem" zdania.</li>
+            <li><strong>TF-IDF (Trafność terminologiczna):</strong> Ocena używania specjalistycznego i rzadkiego słownictwa (IDF), które daje silny sygnał bycia ekspertem.</li>
+            </ul>
+
+            <hr style="border: 0; border-top: 1px solid #ebeef5; margin: 20px 0;">
+
+            <h4 style="color: #006699;">3. Ocena E-E-A-T</h4>
+            <p><em>(Experience, Expertise, Authoritativeness, Trustworthiness)</em><br>
+            System, którym Google ocenia wiarygodność Twoją i Twojej strony (krytyczne dla branż YMYL).</p>
+            <ul>
+            <li><strong>Experience:</strong> Czy widać dowody używania produktu/przeżycia doświadczenia (własne zdjęcia, opis odczuć)?</li>
+            <li><strong>Expertise:</strong> Czy autor ma wiedzę formalną?</li>
+            <li><strong>Authoritativeness:</strong> Czy inni eksperci cytują tę stronę?</li>
+            <li><strong>Trust:</strong> Czy strona jest bezpieczna i prawdziwa?</li>
+            </ul>
+        </div>
+    </details>
+    """
     labels = []
     data_points = []
     
@@ -252,19 +304,21 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
                 <p><strong>URL:</strong> <a href="{url}" target="_blank" style="color: #409eff; text-decoration: none;">{url}</a> | <strong>Fraza:</strong> {keyword}</p>
             </div>
             
+            {WSTEP_HTML}
+            
             <div class="grid-top">
                 <div class="left-col">
                     <div class="score-cards">
                         <div class="score-card">
                             <span class="badge-top-right" style="color: {cqs_color}; border-color: {cqs_color}; background: #fff;">{cqs_badge}</span>
-                            <span class="score-title">Content Quality Score ℹ️</span>
+                            <span class="score-title">Content Quality Score</span>
                             <div>
                                 <span class="score-value">{report.cqs_score}</span><span class="score-max"> / 100</span>
                             </div>
                         </div>
                         <div class="score-card">
                             <span class="badge-top-right" style="color: {ai_color}; border-color: {ai_color}; background: #fff;">{ai_badge}</span>
-                            <span class="score-title">AI Citability Score ℹ️</span>
+                            <span class="score-title">AI Citability Score</span>
                             <div>
                                 <span class="score-value" style="color: {ai_color};">{report.ai_citability_score}</span><span class="score-max"> / 10</span>
                             </div>
@@ -281,7 +335,7 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
                 </div>
                 
                 <div class="chart-card">
-                    <div class="chart-title">Profil wymiarów ℹ️</div>
+                    <div class="chart-title">Profil wymiarów</div>
                     <div class="canvas-container">
                         <canvas id="radarChart"></canvas>
                     </div>
@@ -442,7 +496,61 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
 
 
 def generate_master_html_report(all_results: list) -> bytes:
+    WSTEP_HTML = """
+    <details class="wstep-details" style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); border-left: 4px solid #003366;">
+        <summary style="font-size: 18px; font-weight: 600; cursor: pointer; color: #003366;">Wstęp i definicje (Rozwiń)</summary>
+        <div style="margin-top: 20px; font-size: 15px; color: #4a4a4a; line-height: 1.6;">
+            <h3 style="margin-top: 0;">Wstęp do Audytu Semantycznego: Jak Google i AI "czytają" Twoje treści?</h3>
+            <p>Celem tego audytu nie jest tylko sprawdzenie, czy tekst "dobrze się czyta" ludziom. Naszym głównym zadaniem jest dostosowanie treści do sposobu, w jaki analizują ją <strong>algorytmy Google oraz nowoczesne modele AI</strong> (takie jak ChatGPT czy Google AI Overviews).</p>
+            <p>Audyt składa się z <strong>3 głównych filarów</strong>, które sprawdzają treść pod kątem co najmniej 12 kluczowych kryteriów:</p>
+            <ol>
+            <li><strong>Zgodność z Central Search Intent (CSI)</strong> – czy algorytm rozumie, o czym dokładnie piszesz i dla kogo?</li>
+            <li><strong>Jakość treści</strong> – jak kosztowna i trudna w interpretacji jest Twoja strona dla robota?</li>
+            <li><strong>Ocena E-E-A-T</strong> – czy Google uważa Cię za wiarygodnego eksperta?</li>
+            </ol>
+            
+            <hr style="border: 0; border-top: 1px solid #ebeef5; margin: 20px 0;">
+            
+            <h4 style="color: #006699;">1. Zgodność z Central Search Intent (CSI)</h4>
+            <p><em>(Analiza: EAV GAP + BLUF + Chunk + URR)</em><br>
+            Tutaj sprawdzamy, czy Twój artykuł odpowiada na intencję użytkownika i czy jest zbudowany tak, aby maszyna mogła bezbłędnie zidentyfikować temat przewodni.</p>
+            <ul>
+            <li><strong>Central Search Intent (CSI):</strong> To matematyczne połączenie tematu (Encji) z kontekstem źródła. Algorytm musi wiedzieć, z jakiej perspektywy opisujesz temat.</li>
+            <li><strong>Entity-Attribute-Value (EAV):</strong> Google dąży do wyekstrahowania z tekstu "suchych faktów" i zapisania ich w tabeli (Grafie Wiedzy). Sprawdzimy, czy Twój tekst to "lita ściana tekstu", czy ustrukturyzowana baza wiedzy.</li>
+            <li><strong>BLUF (Bottom Line Up Front):</strong> Najważniejsza informacja musi znaleźć się na początku. Google i AI często skanują tylko początek sekcji.</li>
+            <li><strong>CHUNK (Fragmentacja pod RAG):</strong> Każda sekcja pod nagłówkiem H2 powinna być samodzielną, wyczerpującą odpowiedzią na dany problem.</li>
+            <li><strong>URR (Unique, Root, Rare):</strong> Aby content był uznany za wybitny, musisz ułożyć atrybuty encji w odpowiedniej hierarchii (definiujące, wyróżniające, niszowe).</li>
+            </ul>
+
+            <hr style="border: 0; border-top: 1px solid #ebeef5; margin: 20px 0;">
+
+            <h4 style="color: #006699;">2. Jakość treści</h4>
+            <p><em>(Analiza: CoR + Information Density + SRL + TF-IDF)</em><br>
+            W tej sekcji mierzymy efektywność Twojego tekstu. Czy dostarczasz wiedzę szybko i konkretnie, czy zmuszasz Google do "marnowania prądu"?</p>
+            <ul>
+            <li><strong>CoR (Cost of Retrieval):</strong> Wydatek obliczeniowy, jaki wyszukiwarka ponosi na przeczytanie Twojej strony. Google wybierze konkurencję, która dostarczy tę samą wiedzę "taniej".</li>
+            <li><strong>Information Density (Gęstość Informacji):</strong> Stosunek konkretnych faktów do "puchu" (fluff). Im więcej faktów i konkretów, tym wyższa ocena.</li>
+            <li><strong>SRL (Semantic Role Labeling):</strong> To gramatyka dla robotów. Wskazanie: Kto? Co robi? Komu? Należy usuwać stronę bierną, aby Twoja Encja była "Bohaterem" zdania.</li>
+            <li><strong>TF-IDF (Trafność terminologiczna):</strong> Ocena używania specjalistycznego i rzadkiego słownictwa (IDF), które daje silny sygnał bycia ekspertem.</li>
+            </ul>
+
+            <hr style="border: 0; border-top: 1px solid #ebeef5; margin: 20px 0;">
+
+            <h4 style="color: #006699;">3. Ocena E-E-A-T</h4>
+            <p><em>(Experience, Expertise, Authoritativeness, Trustworthiness)</em><br>
+            System, którym Google ocenia wiarygodność Twoją i Twojej strony (krytyczne dla branż YMYL).</p>
+            <ul>
+            <li><strong>Experience:</strong> Czy widać dowody używania produktu/przeżycia doświadczenia (własne zdjęcia, opis odczuć)?</li>
+            <li><strong>Expertise:</strong> Czy autor ma wiedzę formalną?</li>
+            <li><strong>Authoritativeness:</strong> Czy inni eksperci cytują tę stronę?</li>
+            <li><strong>Trust:</strong> Czy strona jest bezpieczna i prawdziwa?</li>
+            </ul>
+        </div>
+    </details>
+    """
+
     total_cqs = 0
+    total_ai_cit = 0
     excellent_count = 0
     needs_improvement_count = 0
     total_articles = 0
@@ -460,6 +568,7 @@ def generate_master_html_report(all_results: list) -> bytes:
             
         total_articles += 1
         total_cqs += r.cqs_score
+        total_ai_cit += r.ai_citability_score
         
         if r.cqs_score >= 80:
             excellent_count += 1
@@ -532,6 +641,7 @@ def generate_master_html_report(all_results: list) -> bytes:
         """
         
     avg_cqs = round(total_cqs / total_articles, 2) if total_articles > 0 else 0
+    avg_ai = round(total_ai_cit / total_articles, 2) if total_articles > 0 else 0
     
     html_content = f"""
     <!DOCTYPE html>
@@ -617,8 +727,14 @@ def generate_master_html_report(all_results: list) -> bytes:
                         <span class="stat-val" style="color: #409eff;">{avg_cqs}</span>
                         <span>Średni Wynik CQS</span>
                     </div>
+                    <div class="stat-card">
+                        <span class="stat-val" style="color: #67c23a;">{avg_ai}</span>
+                        <span>Średnie AI Citability</span>
+                    </div>
                 </div>
             </div>
+            
+            {WSTEP_HTML}
             
             <h2>Lista Artykułów</h2>
             {rows_html}

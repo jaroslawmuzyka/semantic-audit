@@ -73,6 +73,13 @@ with st.sidebar:
             value="Jesteś głównym strategiem treści. Na bazie surowych wyników wygeneruj profesjonalny raport audytu.\n1. BEFORE/AFTER: Stwórz ulepszoną wersję każdego problematycznego fragmentu (AFTER).\n2. SRL transformacje: Przekształć zdania z Patient na Agent.\n3. Struktura docelowa: H1/H2/H3 z oznaczeniami [OK]/[ZMIEŃ]/[NOWA] + jednozdaniowy BLUF dla każdego H2.\n4. E-E-A-T: Wygeneruj gotowe bloki tekstu (Bio, disclaimer, data).\n5. Rekomendacje z priorytetami:\n- KRYTYCZNE: Wysoki wpływ, Niski wysiłek\n- WYSOKIE: Wysoki wpływ, Średni wysiłek\n- ŚREDNIE: Wysoki wpływ, Wysoki wysiłek\nOblicz CQS (Content Quality Score) na podstawie ocen cząstkowych i podaj szacowany wpływ (+pkt) dla każdej rekomendacji.",
             height=250
         )
+        
+    st.divider()
+    st.markdown("### Koszty API")
+    cost_placeholder = st.empty()
+    cost_val = st.session_state.get("total_cost", 0.0)
+    tokens = st.session_state.get("total_tokens", {"in": 0, "out": 0})
+    cost_placeholder.metric("Całkowity Koszt Sesji", f"${cost_val:.4f}", f"{tokens['in']} in / {tokens['out']} out")
 
 pricing = {
     "gpt-5.4-mini": {"in": 0.75, "out": 4.50},
@@ -239,6 +246,7 @@ with tab1:
             st.session_state.report = report
             st.session_state.total_cost = cost
             st.session_state.total_tokens = {"in": total_in, "out": total_out}
+            cost_placeholder.metric("Całkowity Koszt Sesji", f"${st.session_state.total_cost:.4f}", f"{total_in} in / {total_out} out")
             st.session_state.intermediate_logs = {
                 "source_content": source_content,
                 "competitor_urls": competitor_urls if keyword_input else [],
@@ -563,6 +571,7 @@ with tab2:
                     st.session_state.total_tokens["in"] += total_in
                     st.session_state.total_tokens["out"] += total_out
                     st.session_state.total_cost += url_cost
+                    cost_placeholder.metric("Całkowity Koszt Sesji", f"${st.session_state.total_cost:.4f}", f"{st.session_state.total_tokens['in']} in / {st.session_state.total_tokens['out']} out")
                     
                     # Generate partial archives
                     st.session_state.mass_zip = create_zip_archive(st.session_state.mass_files)
