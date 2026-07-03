@@ -557,6 +557,7 @@ def generate_master_html_report(all_results: list) -> bytes:
     total_articles = 0
     
     rows_html = ""
+    chart_scripts = ""
     
     for item in sorted_results:
         url = item.get("url", "")
@@ -595,6 +596,92 @@ def generate_master_html_report(all_results: list) -> bytes:
                     
         tf_idf = ", ".join(s.missing_tf_idf_terms) if s and hasattr(s, 'missing_tf_idf_terms') and s.missing_tf_idf_terms else "Brak"
         
+        import json
+        chart_labels = [e.dimension for e in s.eeat_signals] if s and hasattr(s, "eeat_signals") else []
+        chart_data = [e.score for e in s.eeat_signals] if s and hasattr(s, "eeat_signals") else []
+        chart_labels_json = json.dumps(chart_labels)
+        chart_data_json = json.dumps(chart_data)
+        
+        canvas_id = f"radarChart_{total_articles}"
+        
+        chart_scripts += f"""
+            const ctx_{total_articles} = document.getElementById('{canvas_id}').getContext('2d');
+            new Chart(ctx_{total_articles}, {{
+                type: 'radar',
+                data: {{
+                    labels: {chart_labels_json},
+                    datasets: [{{
+                        label: 'Wynik Wymiaru',
+                        data: {chart_data_json},
+                        backgroundColor: 'rgba(26, 147, 140, 0.2)',
+                        borderColor: 'rgba(26, 147, 140, 0.8)',
+                        pointBackgroundColor: 'rgba(26, 147, 140, 1)',
+                        pointBorderColor: '#fff',
+                        pointHoverBackgroundColor: '#fff',
+                        pointHoverBorderColor: 'rgba(26, 147, 140, 1)',
+                        borderWidth: 2,
+                    }}]
+                }},
+                options: {{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {{
+                        r: {{
+                            beginAtZero: true,
+                            min: 0,
+                            max: 10,
+                            angleLines: {{ color: 'rgba(0, 0, 0, 0.05)' }},
+                            grid: {{ color: 'rgba(0, 0, 0, 0.05)' }},
+                            pointLabels: {{
+                                font: {{ size: 10, family: "'Manrope', sans-serif", weight: '600' }},
+                                color: '#5B6B80'
+                            }},
+                            ticks: {{ stepSize: 2, display: false }}
+                        }}
+                    }},
+                    plugins: {{ legend: {{ display: false }} }}
+                }}
+            }});
+        """
+        
+        crit_high_count = len([rec for rec in r.recommendations if rec.priority.upper() in ["KRYTYCZNE", "WYSOKIE"]])
+        
+        g = item.get("gap_analysis")
+        eav_rows = ""
+        if g and hasattr(g, "eav_matrix"):
+            for e in g.eav_matrix:
+                eav_rows += f"""
+                <tr style="border-bottom: 1px solid #ebeef5;">
+                    <td style="padding: 10px;">{e.attribute}</td>
+                    <td style="padding: 10px;">{e.urr_type}</td>
+                    <td style="padding: 10px;">{e.coverage}</td>
+                    <td style="padding: 10px;">{e.priority}</td>
+                    <td style="padding: 10px;">{e.status}</td>
+                </tr>
+                """
+        
+        eav_table_html = f"""
+        <div class="data-card" style="grid-column: 1 / -1; margin-top: 20px;">
+            <h4>Matrix EAV:</h4>
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                    <thead>
+                        <tr style="background-color: #f8f9fa; border-bottom: 2px solid #ebeef5;">
+                            <th style="padding: 10px; text-align: left;">Atrybut</th>
+                            <th style="padding: 10px; text-align: left;">Typ</th>
+                            <th style="padding: 10px; text-align: left;">Pokrycie</th>
+                            <th style="padding: 10px; text-align: left;">Priorytet</th>
+                            <th style="padding: 10px; text-align: left;">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {eav_rows}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        """
+        
         rows_html += f"""
         <details class="url-details">
             <summary class="url-summary">
@@ -605,7 +692,39 @@ def generate_master_html_report(all_results: list) -> bytes:
             </summary>
             <div class="details-content">
                 <p><strong>Fraza:</strong> {keyword}</p>
-                <p><strong>Podsumowanie:</strong> {r.executive_summary}</p>
+                
+                <div class="grid-top" style="margin-bottom: 20px;">
+                    <div class="left-col">
+                        <div class="score-cards">
+                            <div class="score-card">
+                                <span class="score-title">CQS</span>
+                                <div>
+                                    <span class="score-value">{r.cqs_score}</span><span class="score-max"> / 100</span>
+                                </div>
+                            </div>
+                            <div class="score-card">
+                                <span class="score-title">AI Citability</span>
+                                <div>
+                                    <span class="score-value" style="color: {ai_badge_color};">{r.ai_citability_score}</span><span class="score-max"> / 10</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="summary-card">
+                            <div class="summary-text">
+                                Zidentyfikowano <strong>{crit_high_count} problemów krytycznych/ważnych.</strong><br><br>
+                                <strong>Podsumowanie:</strong> {r.executive_summary}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="chart-card">
+                        <div class="chart-title">Profil wymiarów</div>
+                        <div class="canvas-container" style="height: 250px;">
+                            <canvas id="{canvas_id}"></canvas>
+                        </div>
+                    </div>
+                </div>
                 
                 <div class="card-grid">
                     <div class="data-card">
@@ -633,6 +752,7 @@ def generate_master_html_report(all_results: list) -> bytes:
                         <h4>Brakujące Słowa (TF-IDF):</h4>
                         <p style="font-size: 14px; color: #666; margin: 0;">{tf_idf}</p>
                     </div>
+                    {eav_table_html}
                 </div>
             </div>
         </details>
@@ -647,6 +767,7 @@ def generate_master_html_report(all_results: list) -> bytes:
     <head>
         <meta charset="UTF-8">
         <title>Zbiorczy Raport Audytu Masowego</title>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
             body {{
@@ -791,6 +912,9 @@ def generate_master_html_report(all_results: list) -> bytes:
             <h2>Lista Artykułów</h2>
             {rows_html}
         </div>
+        <script>
+            {chart_scripts}
+        </script>
     </body>
     </html>
     """
