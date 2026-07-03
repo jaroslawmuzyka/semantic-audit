@@ -115,6 +115,12 @@ with tab1:
     language_name = audit_lang_input
     user_context_input = st.text_area("Dodatkowy kontekst dla AI (opcjonalnie)", placeholder="np. Nie wspominaj o marce X...", height=100)
 
+    input_mode = st.radio("Sposób wprowadzania treści", ["Pobierz treść z URL", "Wklej własną treść (Markdown)"], horizontal=True)
+    if input_mode == "Wklej własną treść (Markdown)":
+        custom_markdown_input = st.text_area("Wklej treść w formacie Markdown", height=300)
+    else:
+        custom_markdown_input = ""
+
     if st.session_state.audit_step == 0:
         c_krok1, c_test = st.columns([1, 1])
         with c_krok1:
@@ -123,21 +129,27 @@ with tab1:
             btn_test = st.button("Przetestuj JINA (Szybki Podgląd)", use_container_width=True)
             
         if btn_test:
-            if not url_input:
-                st.error("Proszę podać URL artykułu.")
+            if input_mode == "Pobierz treść z URL":
+                if not url_input:
+                    st.error("Proszę podać URL artykułu.")
+                else:
+                    with st.spinner("Pobieranie JINA..."):
+                        data = fetch_url(url_input, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
+                        if data and data.get("data", {}).get("content"):
+                            st.success("Pobrano poprawnie.")
+                            with st.expander("Podgląd JINA", expanded=True):
+                                st.markdown(data["data"]["content"])
+                        else:
+                            st.error("Nie udało się pobrać treści.")
             else:
-                with st.spinner("Pobieranie JINA..."):
-                    data = fetch_url(url_input, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
-                    if data and data.get("data", {}).get("content"):
-                        st.success("Pobrano poprawnie.")
-                        with st.expander("Podgląd JINA", expanded=True):
-                            st.markdown(data["data"]["content"])
-                    else:
-                        st.error("Nie udało się pobrać treści.")
+                st.info("Testowanie JINA dotyczy tylko pobierania z URL.")
 
         if btn_krok1:
-            if not url_input:
+            if input_mode == "Pobierz treść z URL" and not url_input:
                 st.error("Proszę podać URL artykułu.")
+                st.stop()
+            elif input_mode == "Wklej własną treść (Markdown)" and not custom_markdown_input.strip():
+                st.error("Proszę wkleić treść w formacie Markdown.")
                 st.stop()
                 
             st.session_state.audit_completed = False
@@ -148,17 +160,23 @@ with tab1:
             st.session_state.total_tokens = {"in": 0, "out": 0}
             
             try:
-                with st.status("Krok 1: Pobieranie treści...", expanded=True) as status:
-                    source_data = fetch_url(url_input, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
-                    if not source_data:
-                        st.error("Nie udało się pobrać treści artykułu.")
-                        st.stop()
-                    
-                    source_content = source_data.get("data", {}).get("content", "")
-                    st.session_state.source_content = source_content
-                    st.session_state.source_title = source_data.get("data", {}).get("title", "Raport Audytu AI")
+                if input_mode == "Pobierz treść z URL":
+                    with st.status("Krok 1: Pobieranie treści...", expanded=True) as status:
+                        source_data = fetch_url(url_input, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
+                        if not source_data:
+                            st.error("Nie udało się pobrać treści artykułu.")
+                            st.stop()
+                        
+                        source_content = source_data.get("data", {}).get("content", "")
+                        st.session_state.source_content = source_content
+                        st.session_state.source_title = source_data.get("data", {}).get("title", "Raport Audytu AI")
+                        st.session_state.audit_step = 1
+                        status.update(label="Krok 1: Zakończono.", state="complete", expanded=False)
+                        st.rerun()
+                else:
+                    st.session_state.source_content = custom_markdown_input
+                    st.session_state.source_title = "Własny tekst (Markdown)"
                     st.session_state.audit_step = 1
-                    status.update(label="Krok 1: Zakończono.", state="complete", expanded=False)
                     st.rerun()
             except Exception as e:
                 st.error(f"Wystąpił błąd: {e}")
@@ -231,8 +249,9 @@ with tab1:
             progress_bar.progress(90)
 
             with st.status("Krok 7: XLSX i HTML...", expanded=True) as status:
+                final_url = url_input if url_input else "wlasny-tekst"
                 excel_bytes = generate_excel_report(gap_analysis, scores, report, source_content, consolidated_competitors)
-                html_bytes = generate_single_html_report(url_input, st.session_state.get("source_title", "Raport Audytu AI"), keyword_input, gap_analysis, scores, report)
+                html_bytes = generate_single_html_report(final_url, st.session_state.get("source_title", "Raport Audytu AI"), keyword_input, gap_analysis, scores, report)
                 status.update(label="Krok 7: Gotowy.", state="complete", expanded=False)
                 
             progress_bar.progress(100)
