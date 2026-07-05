@@ -96,49 +96,54 @@ def truncate_content(content, max_words=1500):
     words = content.split()
     if len(words) <= max_words:
         return content
-    return ' '.join(words[:max_words]) + '\n\n[... treść skrócona do 1500 słów ...]'
+    return ' '.join(words[:max_words]) + f'\n\n[... treść skrócona do {max_words} słów ...]'
 
 def fetch_url(url, max_retries=3, remove_selector=None, target_selector=None):
+    """Pobiera treść strony przez JINA Reader.
+
+    Zwraca dict z odpowiedzią JINA, a przy niepowodzeniu dict {"error": "..."} z powodem.
+    """
     headers = {
         "Accept": "application/json",
         "X-Return-Format": "markdown",
         "X-Engine": "cf-browser-rendering",
         "X-Retain-Images": "none",
-        "X-Timeout": "2"
+        "X-Timeout": "10"
     }
     if remove_selector:
         headers["X-Remove-Selector"] = remove_selector
     if target_selector:
         headers["X-Target-Selector"] = target_selector
-    
+
     api_key = get_api_key()
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
     request_url = f"{API_BASE}{url}"
-    
+    last_error = "Nieznany błąd"
+
     for attempt in range(max_retries):
         try:
             resp = requests.get(request_url, headers=headers, timeout=60)
             if resp.status_code == 200:
                 return resp.json()
             elif resp.status_code == 429:
+                last_error = "HTTP 429 (rate limit)"
                 wait = 2 ** (attempt + 1)
                 time.sleep(wait)
             else:
-                return None
-        except requests.exceptions.RequestException:
+                return {"error": f"JINA HTTP {resp.status_code}: {resp.text[:200]}"}
+        except requests.exceptions.RequestException as e:
+            last_error = str(e)
             if attempt < max_retries - 1:
                 time.sleep(2)
-            else:
-                return None
-    return None
+    return {"error": last_error}
 
 def process_single_url(url, clean=True, remove_selector=None, target_selector=None):
     data = fetch_url(url, remove_selector=remove_selector, target_selector=target_selector)
-    if not data:
+    if not data or "error" in data:
         return {"url": url, "status": "ERROR", "content": None, "title": None, "word_count": 0}
-        
+
     title = data.get("data", {}).get("title", "")
     content = data.get("data", {}).get("content", "")
     

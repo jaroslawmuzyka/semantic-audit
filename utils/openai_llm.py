@@ -95,7 +95,7 @@ def analyze_competitor_gaps(topic, consolidated_competitors, model_name, system_
     if user_context:
         full_system += f"\n\nDODATKOWY KONTEKST UŻYTKOWNIKA (obowiązkowo uwzględnij): {user_context}"
         
-    response = client.beta.chat.completions.parse(
+    response = client.chat.completions.parse(
         model=model_name,
         messages=[
             {"role": "system", "content": full_system},
@@ -109,7 +109,7 @@ def score_content(source_article, gap_analysis_result: GapAnalysisResult, model_
     client = get_openai_client()
     prompt = f"""
     Analyze the following source article against the competitor gap analysis.
-    Evaluate 9 dimensions (0-10): CSI Alignment, BLUF, Chunk Quality, URR Placement, Cost of Retrieval, Information Density, SRL Salience, TF-IDF Quality.
+    Evaluate 9 dimensions (0-10): CSI Alignment, BLUF, Chunk Quality, URR Placement, Cost of Retrieval, Information Density, SRL Salience, TF-IDF Quality, EEAT.
     Provide scores, top problems, and extract problematic quotes (BEFORE).
     
     Gap Analysis:
@@ -123,7 +123,7 @@ def score_content(source_article, gap_analysis_result: GapAnalysisResult, model_
     if user_context:
         full_system += f"\n\nDODATKOWY KONTEKST UŻYTKOWNIKA (obowiązkowo uwzględnij): {user_context}"
         
-    response = client.beta.chat.completions.parse(
+    response = client.chat.completions.parse(
         model=model_name,
         messages=[
             {"role": "system", "content": full_system},
@@ -155,7 +155,7 @@ def generate_audit_report(source_article, gap_analysis: GapAnalysisResult, score
     if user_context:
         full_system += f"\n\nDODATKOWY KONTEKST UŻYTKOWNIKA (obowiązkowo uwzględnij): {user_context}"
         
-    response = client.beta.chat.completions.parse(
+    response = client.chat.completions.parse(
         model=model_name,
         messages=[
             {"role": "system", "content": full_system},
@@ -172,7 +172,7 @@ def generate_keyword_from_url(url: str, title: str, model_name: str) -> tuple:
     client = get_openai_client()
     prompt = f"URL: {url}\nTitle: {title if title else 'Brak'}\n\nWygeneruj najlepszą, naturalną główną frazę kluczową (keyword) dla tego artykułu. Maksymalnie 3-4 słowa. Odpowiedz wyłącznie w języku polskim."
     
-    response = client.beta.chat.completions.parse(
+    response = client.chat.completions.parse(
         model=model_name,
         messages=[
             {"role": "system", "content": "Jesteś ekspertem SEO. Twoim zadaniem jest wyciągnięcie głównej frazy kluczowej na podstawie struktury URL i tagu Title."},

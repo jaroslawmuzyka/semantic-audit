@@ -11,7 +11,7 @@ def get_api_key():
     except Exception:
         return os.environ.get("NODESHUB_API_KEY")
 
-def search(keyword, hl="pl", gl="pl", max_retries=3):
+def _search_impl(keyword, hl="pl", gl="pl", max_retries=3):
     api_key = get_api_key()
     if not api_key:
         return {"error": "NODESHUB_API_KEY is missing"}
@@ -37,6 +37,22 @@ def search(keyword, hl="pl", gl="pl", max_retries=3):
                 return {"error": str(e)}
 
     return {"error": "Max retries exceeded"}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _search_cached(keyword, hl, gl):
+    result = _search_impl(keyword, hl=hl, gl=gl)
+    if "error" in result:
+        # Wyjątek zapobiega zapisaniu błędu w cache — kolejna próba trafi w API.
+        raise RuntimeError(result["error"])
+    return result
+
+
+def search(keyword, hl="pl", gl="pl"):
+    try:
+        return _search_cached(keyword, hl, gl)
+    except RuntimeError as e:
+        return {"error": str(e)}
 
 def extract_relevant_data(data):
     results = data.get("data", {}).get("results", {})

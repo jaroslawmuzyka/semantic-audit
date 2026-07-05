@@ -1,677 +1,754 @@
 import json
-import io
+import html as html_lib
+from functools import lru_cache
+from pathlib import Path
 from utils.openai_llm import GapAnalysisResult, ContentScores, AuditReport
+from utils.themes import get_theme
 
-def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis: GapAnalysisResult, scores: ContentScores, report: AuditReport) -> bytes:
-    WSTEP_HTML = """
-    <details class="wstep-details" style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); border-left: 4px solid #003366;">
-        <summary style="font-size: 18px; font-weight: 600; cursor: pointer; color: #003366;">Wstęp i definicje (Rozwiń)</summary>
-        <div style="margin-top: 20px; font-size: 15px; color: #4a4a4a; line-height: 1.6;">
-            <h3 style="margin-top: 0;">Wstęp do Audytu Semantycznego: Jak Google i AI "czytają" Twoje treści?</h3>
-            <p>Celem tego audytu nie jest tylko sprawdzenie, czy tekst "dobrze się czyta" ludziom. Naszym głównym zadaniem jest dostosowanie treści do sposobu, w jaki analizują ją <strong>algorytmy Google oraz nowoczesne modele AI</strong> (takie jak ChatGPT czy Google AI Overviews).</p>
-            <p>Audyt składa się z <strong>3 głównych filarów</strong>, które sprawdzają treść pod kątem co najmniej 12 kluczowych kryteriów:</p>
-            <ol>
-            <li><strong>Zgodność z Central Search Intent (CSI)</strong> – czy algorytm rozumie, o czym dokładnie piszesz i dla kogo?</li>
-            <li><strong>Jakość treści</strong> – jak kosztowna i trudna w interpretacji jest Twoja strona dla robota?</li>
-            <li><strong>Ocena E-E-A-T</strong> – czy Google uważa Cię za wiarygodnego eksperta?</li>
-            </ol>
-            
-            <hr style="border: 0; border-top: 1px solid #ebeef5; margin: 20px 0;">
-            
-            <h4 style="color: #006699;">1. Zgodność z Central Search Intent (CSI)</h4>
-            <p><em>(Analiza: EAV GAP + BLUF + Chunk + URR)</em><br>
-            Tutaj sprawdzamy, czy Twój artykuł odpowiada na intencję użytkownika i czy jest zbudowany tak, aby maszyna mogła bezbłędnie zidentyfikować temat przewodni.</p>
-            <ul>
-            <li><strong>Central Search Intent (CSI):</strong> To matematyczne połączenie tematu (Encji) z kontekstem źródła. Algorytm musi wiedzieć, z jakiej perspektywy opisujesz temat.</li>
-            <li><strong>Entity-Attribute-Value (EAV):</strong> Google dąży do wyekstrahowania z tekstu "suchych faktów" i zapisania ich w tabeli (Grafie Wiedzy). Sprawdzimy, czy Twój tekst to "lita ściana tekstu", czy ustrukturyzowana baza wiedzy.</li>
-            <li><strong>BLUF (Bottom Line Up Front):</strong> Najważniejsza informacja musi znaleźć się na początku. Google i AI często skanują tylko początek sekcji.</li>
-            <li><strong>CHUNK (Fragmentacja pod RAG):</strong> Każda sekcja pod nagłówkiem H2 powinna być samodzielną, wyczerpującą odpowiedzią na dany problem.</li>
-            <li><strong>URR (Unique, Root, Rare):</strong> Aby content był uznany za wybitny, musisz ułożyć atrybuty encji w odpowiedniej hierarchii (definiujące, wyróżniające, niszowe).</li>
-            </ul>
+_CHARTJS_PATH = Path(__file__).parent / "assets" / "chart.umd.min.js"
 
-            <hr style="border: 0; border-top: 1px solid #ebeef5; margin: 20px 0;">
 
-            <h4 style="color: #006699;">2. Jakość treści</h4>
-            <p><em>(Analiza: CoR + Information Density + SRL + TF-IDF)</em><br>
-            W tej sekcji mierzymy efektywność Twojego tekstu. Czy dostarczasz wiedzę szybko i konkretnie, czy zmuszasz Google do "marnowania prądu"?</p>
-            <ul>
-            <li><strong>CoR (Cost of Retrieval):</strong> Wydatek obliczeniowy, jaki wyszukiwarka ponosi na przeczytanie Twojej strony. Google wybierze konkurencję, która dostarczy tę samą wiedzę "taniej".</li>
-            <li><strong>Information Density (Gęstość Informacji):</strong> Stosunek konkretnych faktów do "puchu" (fluff). Im więcej faktów i konkretów, tym wyższa ocena.</li>
-            <li><strong>SRL (Semantic Role Labeling):</strong> To gramatyka dla robotów. Wskazanie: Kto? Co robi? Komu? Należy usuwać stronę bierną, aby Twoja Encja była "Bohaterem" zdania.</li>
-            <li><strong>TF-IDF (Trafność terminologiczna):</strong> Ocena używania specjalistycznego i rzadkiego słownictwa (IDF), które daje silny sygnał bycia ekspertem.</li>
-            </ul>
+@lru_cache(maxsize=1)
+def _chartjs_inline() -> str:
+    """Osadza Chart.js w raporcie, żeby wykresy działały offline (bez CDN)."""
+    try:
+        return f"<script>{_CHARTJS_PATH.read_text(encoding='utf-8')}</script>"
+    except OSError:
+        # Fallback na CDN, gdyby plik zniknął z repo.
+        return '<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>'
 
-            <hr style="border: 0; border-top: 1px solid #ebeef5; margin: 20px 0;">
 
-            <h4 style="color: #006699;">3. Ocena E-E-A-T</h4>
-            <p><em>(Experience, Expertise, Authoritativeness, Trustworthiness)</em><br>
-            System, którym Google ocenia wiarygodność Twoją i Twojej strony (krytyczne dla branż YMYL).</p>
-            <ul>
-            <li><strong>Experience:</strong> Czy widać dowody używania produktu/przeżycia doświadczenia (własne zdjęcia, opis odczuć)?</li>
-            <li><strong>Expertise:</strong> Czy autor ma wiedzę formalną?</li>
-            <li><strong>Authoritativeness:</strong> Czy inni eksperci cytują tę stronę?</li>
-            <li><strong>Trust:</strong> Czy strona jest bezpieczna i prawdziwa?</li>
-            </ul>
-        </div>
+def esc(value) -> str:
+    """Escapuje treści dynamiczne (LLM / scraping) przed wstawieniem do HTML."""
+    return html_lib.escape(str(value if value is not None else ""))
+
+
+WSTEP_INNER = """
+    <div style="margin-top: 20px; font-size: 15px; line-height: 1.6;">
+        <h3 style="margin-top: 0;">Wstęp do Audytu Semantycznego: Jak Google i AI "czytają" Twoje treści?</h3>
+        <p>Celem tego audytu nie jest tylko sprawdzenie, czy tekst "dobrze się czyta" ludziom. Naszym głównym zadaniem jest dostosowanie treści do sposobu, w jaki analizują ją <strong>algorytmy Google oraz nowoczesne modele AI</strong> (takie jak ChatGPT czy Google AI Overviews).</p>
+        <p>Audyt składa się z <strong>3 głównych filarów</strong>, które sprawdzają treść pod kątem co najmniej 12 kluczowych kryteriów:</p>
+        <ol>
+        <li><strong>Zgodność z Central Search Intent (CSI)</strong> – czy algorytm rozumie, o czym dokładnie piszesz i dla kogo?</li>
+        <li><strong>Jakość treści</strong> – jak kosztowna i trudna w interpretacji jest Twoja strona dla robota?</li>
+        <li><strong>Ocena E-E-A-T</strong> – czy Google uważa Cię za wiarygodnego eksperta?</li>
+        </ol>
+
+        <hr class="wstep-hr">
+
+        <h4 class="wstep-h4">1. Zgodność z Central Search Intent (CSI)</h4>
+        <p><em>(Analiza: EAV GAP + BLUF + Chunk + URR)</em><br>
+        Tutaj sprawdzamy, czy Twój artykuł odpowiada na intencję użytkownika i czy jest zbudowany tak, aby maszyna mogła bezbłędnie zidentyfikować temat przewodni.</p>
+        <ul>
+        <li><strong>Central Search Intent (CSI):</strong> To matematyczne połączenie tematu (Encji) z kontekstem źródła. Algorytm musi wiedzieć, z jakiej perspektywy opisujesz temat.</li>
+        <li><strong>Entity-Attribute-Value (EAV):</strong> Google dąży do wyekstrahowania z tekstu "suchych faktów" i zapisania ich w tabeli (Grafie Wiedzy). Sprawdzimy, czy Twój tekst to "lita ściana tekstu", czy ustrukturyzowana baza wiedzy.</li>
+        <li><strong>BLUF (Bottom Line Up Front):</strong> Najważniejsza informacja musi znaleźć się na początku. Google i AI często skanują tylko początek sekcji.</li>
+        <li><strong>CHUNK (Fragmentacja pod RAG):</strong> Każda sekcja pod nagłówkiem powinna być samodzielną, wyczerpującą odpowiedzią na dany problem.</li>
+        <li><strong>URR (Unique, Root, Rare):</strong> Aby content był uznany za wybitny, musisz ułożyć atrybuty encji w odpowiedniej hierarchii (definiujące, wyróżniające, niszowe).</li>
+        </ul>
+
+        <hr class="wstep-hr">
+
+        <h4 class="wstep-h4">2. Jakość treści</h4>
+        <p><em>(Analiza: CoR + Information Density + SRL + TF-IDF)</em><br>
+        W tej sekcji mierzymy efektywność Twojego tekstu. Czy dostarczasz wiedzę szybko i konkretnie, czy zmuszasz Google do "marnowania prądu"?</p>
+        <ul>
+        <li><strong>CoR (Cost of Retrieval):</strong> Wydatek obliczeniowy, jaki wyszukiwarka ponosi na przeczytanie Twojej strony. Google wybierze konkurencję, która dostarczy tę samą wiedzę "taniej".</li>
+        <li><strong>Information Density (Gęstość Informacji):</strong> Stosunek konkretnych faktów do "puchu" (fluff). Im więcej faktów i konkretów, tym wyższa ocena.</li>
+        <li><strong>SRL (Semantic Role Labeling):</strong> To gramatyka dla robotów. Wskazanie: Kto? Co robi? Komu? Należy usuwać stronę bierną, aby Twoja Encja była "Bohaterem" zdania.</li>
+        <li><strong>TF-IDF (Trafność terminologiczna):</strong> Ocena używania specjalistycznego i rzadkiego słownictwa (IDF), które daje silny sygnał bycia ekspertem.</li>
+        </ul>
+
+        <hr class="wstep-hr">
+
+        <h4 class="wstep-h4">3. Ocena E-E-A-T</h4>
+        <p><em>(Experience, Expertise, Authoritativeness, Trustworthiness)</em><br>
+        System, którym Google ocenia wiarygodność Twoją i Twojej strony (krytyczne dla branż YMYL).</p>
+        <ul>
+        <li><strong>Experience:</strong> Czy widać dowody używania produktu/przeżycia doświadczenia (własne zdjęcia, opis odczuć)?</li>
+        <li><strong>Expertise:</strong> Czy autor ma wiedzę formalną?</li>
+        <li><strong>Authoritativeness:</strong> Czy inni eksperci cytują tę stronę?</li>
+        <li><strong>Trust:</strong> Czy strona jest bezpieczna i prawdziwa?</li>
+        </ul>
+    </div>
+"""
+
+
+def _wstep_html(theme: dict) -> str:
+    return f"""
+    <details class="wstep-details">
+        <summary>Wstęp i definicje (Rozwiń)</summary>
+        {WSTEP_INNER}
     </details>
     """
-    labels = []
-    data_points = []
-    
-    for dim in scores.dimensions:
-        labels.append(dim.dimension_name)
-        data_points.append(dim.score)
-        
+
+
+def _brand_header(theme: dict) -> str:
+    return f"""
+    <div class="brand-bar">
+        <span class="brand-logo">{theme['brand_html']}</span>
+        <span class="brand-sub">&middot; Audyt Semantyczny Treści</span>
+    </div>
+    """
+
+
+def _brand_footer(theme: dict) -> str:
+    return f"""
+    <footer class="brand-footer">
+        Raport przygotowany przez <strong>{esc(theme['label'])}</strong> &middot; Audyt Semantyczny Treści
+    </footer>
+    """
+
+
+def _base_css(theme: dict) -> str:
+    dots_css = ""
+    if theme["dots_overlay"]:
+        dots_css = """
+            .dots {
+                position: fixed; inset: 0; pointer-events: none; z-index: 0;
+                background-image: radial-gradient(circle, rgba(10,26,79,0.06) 1px, transparent 1px);
+                background-size: 28px 28px;
+            }
+        """
+    return f"""
+        @import url('{theme['font_link']}');
+
+        :root {{
+            --navy: {theme['navy']};
+            --navy2: {theme['navy2']};
+            --text-main: {theme['text_main']};
+            --muted: {theme['muted']};
+            --accent: {theme['accent']};
+            --accent2: {theme['accent2']};
+            --good: {theme['good']};
+            --warn: {theme['warn']};
+            --bad: {theme['bad']};
+            --card-bg: {theme['card_bg']};
+            --card-soft: {theme['card_soft']};
+            --card-soft-border: {theme['card_soft_border']};
+            --line: {theme['line']};
+        }}
+        body {{
+            font-family: {theme['font_body']};
+            {theme['body_bg']}
+            color: var(--text-main);
+            margin: 0;
+            padding: 0 20px 40px 20px;
+        }}
+        h1, h2, h3, h4, .score-value, .stat-val, .brand-logo {{
+            font-family: {theme['font_heading']};
+        }}
+        {dots_css}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+        }}
+        .brand-bar {{
+            background: {theme['header_bg']};
+            margin: 0 -20px 30px -20px;
+            padding: 18px 40px;
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+        }}
+        .brand-logo {{
+            font-size: 22px;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+        }}
+        .brand-sub {{
+            color: rgba(255,255,255,0.75);
+            font-size: 14px;
+        }}
+        .brand-footer {{
+            margin-top: 40px;
+            padding: 20px;
+            text-align: center;
+            font-size: 13px;
+            color: var(--muted);
+            border-top: 1px solid var(--line);
+        }}
+        .brand-footer strong {{
+            color: var(--navy);
+        }}
+        .wstep-details {{
+            background: var(--card-bg);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+            border-left: 4px solid var(--navy);
+        }}
+        .wstep-details summary {{
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            color: var(--navy);
+        }}
+        .wstep-hr {{
+            border: 0;
+            border-top: 1px solid var(--line);
+            margin: 20px 0;
+        }}
+        .wstep-h4 {{
+            color: var(--navy2);
+        }}
+        .header {{
+            margin-bottom: 30px;
+        }}
+        .header h1 {{
+            margin: 0 0 10px 0;
+            font-size: 26px;
+            color: var(--text-main);
+        }}
+        .header p {{
+            margin: 0;
+            color: var(--muted);
+            font-size: 15px;
+        }}
+        .header a {{
+            color: var(--navy2);
+            text-decoration: none;
+        }}
+        .grid-top {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }}
+        .left-col {{
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }}
+        .score-cards {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }}
+        .score-card {{
+            background-color: var(--card-soft);
+            border: 1px solid var(--card-soft-border);
+            border-radius: 12px;
+            padding: 20px 25px;
+            position: relative;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.02);
+        }}
+        .score-title {{
+            color: var(--muted);
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 15px;
+            display: block;
+        }}
+        .score-value {{
+            font-size: 48px;
+            font-weight: 800;
+        }}
+        .score-max {{
+            font-size: 20px;
+            color: var(--muted);
+            font-weight: 500;
+        }}
+        .summary-card {{
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+            border: 1px solid var(--line);
+        }}
+        .summary-text {{
+            font-size: 16px;
+            line-height: 1.6;
+            margin-bottom: 25px;
+        }}
+        .summary-text strong {{
+            color: var(--bad);
+            font-weight: 600;
+        }}
+        .quick-wins-title {{
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--muted);
+            text-transform: uppercase;
+            margin-bottom: 15px;
+            letter-spacing: 0.5px;
+        }}
+        .quick-win-card {{
+            display: flex;
+            align-items: center;
+            padding: 14px 18px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            margin-bottom: 10px;
+            background-color: var(--card-soft);
+            transition: background-color 0.2s;
+        }}
+        .badge {{
+            font-size: 11px;
+            padding: 5px 10px;
+            border-radius: 6px;
+            margin-right: 15px;
+            font-weight: 600;
+        }}
+        .badge-green {{
+            background-color: rgba(45, 171, 102, 0.12);
+            color: var(--good);
+            border: 1px solid rgba(45, 171, 102, 0.3);
+        }}
+        .qw-text {{
+            font-size: 14px;
+            color: var(--text-main);
+            font-weight: 500;
+        }}
+        .qw-impact {{
+            color: var(--muted);
+            font-size: 12px;
+        }}
+        .chart-card {{
+            background-color: var(--card-bg);
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.04);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid var(--line);
+        }}
+        .chart-title {{
+            width: 100%;
+            font-size: 18px;
+            font-weight: 800;
+            margin-bottom: 25px;
+            color: var(--text-main);
+        }}
+        .canvas-container {{
+            width: 100%;
+            max-width: 450px;
+            aspect-ratio: 1;
+        }}
+        .details-section {{
+            margin-top: 30px;
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+            border: 1px solid var(--line);
+        }}
+        .details-section h2 {{
+            font-size: 20px;
+            margin-top: 0;
+            margin-bottom: 20px;
+            border-bottom: 1px solid var(--line);
+            padding-bottom: 15px;
+        }}
+        .before-after-block {{
+            background: var(--card-soft);
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            border-left: 4px solid var(--accent);
+        }}
+        .before-text {{
+            margin-top: 10px;
+            color: var(--muted);
+            font-style: italic;
+        }}
+        .after-text {{
+            color: var(--good);
+            margin-top: 15px;
+            font-weight: 600;
+            padding-top: 15px;
+            border-top: 1px dashed var(--line);
+        }}
+        .structure-block {{
+            margin-bottom: 15px;
+            padding: 15px;
+            background: var(--card-soft);
+            border-left: 4px solid var(--navy2);
+            border-radius: 4px;
+        }}
+        .structure-block .bluf {{
+            color: var(--muted);
+            font-size: 14px;
+            display: inline-block;
+            margin-top: 5px;
+        }}
+        table.eav-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 14px;
+        }}
+        table.eav-table th {{
+            padding: 10px;
+            text-align: left;
+            background-color: {theme['table_header_bg']};
+            color: {theme['table_header_text']};
+            font-size: 12px;
+            text-transform: uppercase;
+        }}
+        table.eav-table td {{
+            padding: 10px;
+            border-bottom: 1px solid var(--line);
+        }}
+        .two-col-grid {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }}
+        .two-col-grid h4 {{
+            margin-top: 0;
+            color: var(--text-main);
+        }}
+        .two-col-grid ul, .two-col-grid p {{
+            padding-left: 20px;
+            color: var(--muted);
+            font-size: 14px;
+        }}
+        .two-col-grid p {{
+            padding-left: 0;
+            line-height: 1.6;
+        }}
+        @media (max-width: 900px) {{
+            .grid-top, .two-col-grid {{
+                grid-template-columns: 1fr;
+            }}
+        }}
+    """
+
+
+def _radar_chart_js(theme: dict, canvas_id: str, labels_json: str, data_json: str, label_font_size: int = 12) -> str:
+    return f"""
+        const ctx_{canvas_id} = document.getElementById('{canvas_id}').getContext('2d');
+        new Chart(ctx_{canvas_id}, {{
+            type: 'radar',
+            data: {{
+                labels: {labels_json},
+                datasets: [{{
+                    label: 'Wynik Wymiaru',
+                    data: {data_json},
+                    backgroundColor: '{theme['chart_fill']}',
+                    borderColor: '{theme['chart_border']}',
+                    pointBackgroundColor: '{theme['chart_point']}',
+                    pointBorderColor: '#fff',
+                    pointHoverBackgroundColor: '#fff',
+                    pointHoverBorderColor: '{theme['chart_border']}',
+                    borderWidth: 2,
+                }}]
+            }},
+            options: {{
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {{
+                    r: {{
+                        beginAtZero: true,
+                        min: 0,
+                        max: 10,
+                        angleLines: {{ color: 'rgba(0, 0, 0, 0.05)' }},
+                        grid: {{ color: 'rgba(0, 0, 0, 0.05)' }},
+                        pointLabels: {{
+                            font: {{ size: {label_font_size}, family: {json.dumps(theme['font_heading'])}, weight: '600' }},
+                            color: '{theme['muted']}'
+                        }},
+                        ticks: {{ stepSize: 2, display: false }}
+                    }}
+                }},
+                plugins: {{ legend: {{ display: false }} }}
+            }}
+        }});
+    """
+
+
+def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis: GapAnalysisResult, scores: ContentScores, report: AuditReport, theme_key: str = "PG") -> bytes:
+    theme = get_theme(theme_key)
+
+    labels = [dim.dimension_name for dim in scores.dimensions]
+    data_points = [dim.score for dim in scores.dimensions]
+    chart_labels_json = json.dumps(labels, ensure_ascii=False)
     chart_data_json = json.dumps(data_points)
-    chart_labels_json = json.dumps(labels)
-    
+
     quick_wins = [r for r in report.recommendations if r.priority.upper() in ["KRYTYCZNE", "WYSOKIE"]]
-    
+
     quick_wins_html = ""
     for qw in quick_wins:
         quick_wins_html += f"""
         <div class="quick-win-card">
             <span class="badge badge-green">Akcja</span>
-            <span class="qw-text">{qw.title} <span style="color:#7f8c8d; font-size: 12px;">(+{qw.impact_cqs} pkt)</span></span>
+            <span class="qw-text">{esc(qw.title)} <span class="qw-impact">(+{esc(qw.impact_cqs)} pkt)</span></span>
         </div>
         """
-        
-    cqs_badge = "UWAGA" if report.cqs_score < 80 else "ŚWIETNIE"
-    cqs_color = "#e6a23c" if report.cqs_score < 80 else "#67c23a"
+
+    cqs_color = theme["warn"] if report.cqs_score < 80 else theme["good"]
     if report.cqs_score < 50:
-        cqs_color = "#f56c6c"
-    
+        cqs_color = theme["bad"]
+
     ai_citability = report.ai_citability_score
-    ai_badge = "UWAGA" if ai_citability < 8 else "ŚWIETNIE"
-    ai_color = "#e6a23c" if ai_citability < 8 else "#67c23a"
+    ai_color = theme["warn"] if ai_citability < 8 else theme["good"]
     if ai_citability < 5:
-        ai_color = "#f56c6c"
-    
+        ai_color = theme["bad"]
+
     crit_high_count = len(quick_wins)
-    
-    html_content = f"""
-    <!DOCTYPE html>
-    <html lang="pl">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>{title}</title>
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        <style>
-            @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
-            
-            :root {{
-                --bg-color: #f4f6f9;
-                --card-bg: #ffffff;
-                --text-main: #0A2540;
-                --text-muted: #5B6B80;
-                --accent-orange: #F2994A;
-                --accent-green: #27AE60;
-                --card-beige: #F8F9FA;
-                --border-color: #E2E8F0;
-                --primary-blue: #006699;
-            }}
-            body {{
-                font-family: 'Manrope', sans-serif;
-                background-color: var(--bg-color);
-                color: var(--text-main);
-                margin: 0;
-                padding: 40px 20px;
-            }}
-            .container {{
-                max-width: 1200px;
-                margin: 0 auto;
-            }}
-            .header {{
-                margin-bottom: 30px;
-            }}
-            .header h1 {{
-                margin: 0 0 10px 0;
-                font-size: 26px;
-                color: #1a1a1a;
-            }}
-            .header p {{
-                margin: 0;
-                color: var(--text-muted);
-                font-size: 15px;
-            }}
-            .grid-top {{
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 20px;
-                margin-bottom: 20px;
-            }}
-            .left-col {{
-                display: flex;
-                flex-direction: column;
-                gap: 20px;
-            }}
-            .score-cards {{
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 20px;
-            }}
-            .score-card {{
-                background-color: var(--card-beige);
-                border: 1px solid #f2eed8;
-                border-radius: 12px;
-                padding: 20px 25px;
-                position: relative;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.02);
-            }}
-            .score-title {{
-                color: var(--text-muted);
-                font-size: 14px;
-                font-weight: 500;
-                margin-bottom: 15px;
-                display: block;
-            }}
-            .score-value {{
-                font-size: 48px;
-                font-weight: 700;
-                color: {cqs_color};
-            }}
-            .score-max {{
-                font-size: 20px;
-                color: var(--text-muted);
-                font-weight: 500;
-            }}
-            .badge-top-right {{
-                position: absolute;
-                top: 20px;
-                right: 20px;
-                padding: 4px 10px;
-                border-radius: 4px;
-                font-size: 11px;
-                font-weight: 700;
-                letter-spacing: 0.5px;
-                text-transform: uppercase;
-            }}
-            .summary-card {{
-                background-color: var(--card-bg);
-                border-radius: 12px;
-                padding: 30px;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.03);
-            }}
-            .summary-text {{
-                font-size: 16px;
-                line-height: 1.6;
-                margin-bottom: 25px;
-            }}
-            .summary-text strong {{
-                color: #f56c6c;
-                font-weight: 600;
-            }}
-            .quick-wins-title {{
-                font-size: 13px;
-                font-weight: 700;
-                color: var(--text-muted);
-                text-transform: uppercase;
-                margin-bottom: 15px;
-                letter-spacing: 0.5px;
-            }}
-            .quick-win-card {{
-                display: flex;
-                align-items: center;
-                padding: 14px 18px;
-                border: 1px solid var(--border-color);
-                border-radius: 8px;
-                margin-bottom: 10px;
-                background-color: #fafbfc;
-                transition: background-color 0.2s;
-            }}
-            .quick-win-card:hover {{
-                background-color: #f0f4f8;
-            }}
-            .badge {{
-                font-size: 11px;
-                padding: 5px 10px;
-                border-radius: 6px;
-                margin-right: 15px;
-                font-weight: 600;
-            }}
-            .badge-green {{
-                background-color: #eaf5e9;
-                color: #2e7d32;
-                border: 1px solid #c8e6c9;
-            }}
-            .qw-text {{
-                font-size: 14px;
-                color: var(--text-main);
-                font-weight: 500;
-            }}
-            .chart-card {{
-                background-color: var(--card-bg);
-                border-radius: 16px;
-                padding: 30px;
-                box-shadow: 0 8px 30px rgba(0,0,0,0.04);
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                border: 1px solid var(--border-color);
-            }}
-            .chart-title {{
-                width: 100%;
-                font-size: 18px;
-                font-weight: 800;
-                margin-bottom: 25px;
-                color: var(--text-main);
-            }}
-            .canvas-container {{
-                width: 100%;
-                max-width: 450px;
-                aspect-ratio: 1;
-            }}
-            .details-section {{
-                margin-top: 30px;
-                background-color: var(--card-bg);
-                border-radius: 12px;
-                padding: 30px;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.03);
-            }}
-            .details-section h2 {{
-                font-size: 20px;
-                margin-top: 0;
-                margin-bottom: 20px;
-                border-bottom: 1px solid var(--border-color);
-                padding-bottom: 15px;
-            }}
-            .before-after-block {{
-                background: #fafbfc;
-                padding: 20px;
-                border-radius: 8px;
-                margin-bottom: 20px;
-                font-size: 14px;
-                border-left: 4px solid var(--accent-orange);
-            }}
-            .after-text {{
-                color: #2e7d32;
-                margin-top: 15px;
-                font-weight: 600;
-                padding-top: 15px;
-                border-top: 1px dashed #e0e0e0;
-            }}
-            @media (max-width: 900px) {{
-                .grid-top {{
-                    grid-template-columns: 1fr;
-                }}
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <h1>{title}</h1>
-                <p><strong>URL:</strong> <a href="{url}" target="_blank" style="color: #409eff; text-decoration: none;">{url}</a> | <strong>Fraza:</strong> {keyword}</p>
-            </div>
-            
-            {WSTEP_HTML}
-            
-            <div class="grid-top">
-                <div class="left-col">
-                    <div class="score-cards">
-                        <div class="score-card">
-                            <span class="score-title">Content Quality Score</span>
-                            <div>
-                                <span class="score-value">{report.cqs_score}</span><span class="score-max"> / 100</span>
-                            </div>
-                        </div>
-                        <div class="score-card">
-                            <span class="score-title">AI Citability Score</span>
-                            <div>
-                                <span class="score-value" style="color: {ai_color};">{report.ai_citability_score}</span><span class="score-max"> / 10</span>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="summary-card">
-                        <div class="summary-text">
-                            Zidentyfikowano <strong>{crit_high_count} problemów krytycznych/ważnych.</strong><br><br>
-                            <strong>Podsumowanie:</strong> {report.executive_summary}
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="chart-card">
-                    <div class="chart-title">Profil wymiarów</div>
-                    <div class="canvas-container">
-                        <canvas id="radarChart"></canvas>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="summary-card" style="margin-bottom: 20px;">
-                <div class="quick-wins-title">QUICK WINS ({crit_high_count})</div>
-                {quick_wins_html}
-            </div>
-            
-            <div class="details-section">
-                <h2>Wszystkie Rekomendacje</h2>
-    """
-    
+
+    recommendations_html = ""
     for r in report.recommendations:
-        html_content += f"""
+        recommendations_html += f"""
         <div class="before-after-block">
-            <strong>[{r.priority}] {r.title}</strong> (Wpływ: +{r.impact_cqs} pkt)<br>
-            <div style="margin-top: 10px; color: #666; font-style: italic;">Przed zmianą: "{r.before_quote}"</div>
-            <div class="after-text">Przykładowa (nowa) treść: "{r.after_generated}"</div>
+            <strong>[{esc(r.priority)}] {esc(r.title)}</strong> (Wpływ: +{esc(r.impact_cqs)} pkt)<br>
+            <div class="before-text">Przed zmianą: "{esc(r.before_quote)}"</div>
+            <div class="after-text">Przykładowa (nowa) treść: "{esc(r.after_generated)}"</div>
         </div>
         """
-        
-    html_content += "</div>"
-    
-    # EAV Matrix HTML
-    html_content += """
-    <div class="details-section">
-        <h2>Matrix EAV (Entity-Attribute-Value)</h2>
-        <div style="overflow-x: auto;">
-        <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px;">
-            <thead>
-                <tr style="background-color: #f8f9fa; border-bottom: 2px solid #ebeef5;">
-                    <th style="padding: 10px; text-align: left;">Atrybut</th>
-                    <th style="padding: 10px; text-align: left;">Typ</th>
-                    <th style="padding: 10px; text-align: left;">Pokrycie</th>
-                    <th style="padding: 10px; text-align: left;">Priorytet</th>
-                    <th style="padding: 10px; text-align: left;">Status</th>
-                </tr>
-            </thead>
-            <tbody>
-    """
+
+    eav_rows_html = ""
     for e in gap_analysis.eav_matrix:
-        html_content += f"""
-        <tr style="border-bottom: 1px solid #ebeef5;">
-            <td style="padding: 10px;">{e.attribute}</td>
-            <td style="padding: 10px;">{e.urr_type}</td>
-            <td style="padding: 10px;">{e.coverage}</td>
-            <td style="padding: 10px;">{e.priority}</td>
-            <td style="padding: 10px;">{e.status}</td>
+        eav_rows_html += f"""
+        <tr>
+            <td>{esc(e.attribute)}</td>
+            <td>{esc(e.urr_type)}</td>
+            <td>{esc(e.coverage)}</td>
+            <td>{esc(e.priority)}</td>
+            <td>{esc(e.status)}</td>
         </tr>
         """
-    html_content += """
-            </tbody>
-        </table>
-        </div>
-    </div>
-    """
 
-    # Target Structure HTML
+    structure_html = ""
     if getattr(report, "target_structure", None):
-        html_content += f"""
-        <div class="details-section">
-            <h2>Docelowa Struktura Nagłówków (H1-H3) i BLUF</h2>
-        """
         for entry in report.target_structure:
-            h2 = entry.heading
-            bluf = entry.bluf
-            html_content += f"""
-            <div style="margin-bottom: 15px; padding: 15px; background: #fafbfc; border-left: 4px solid #409eff; border-radius: 4px;">
-                <strong style="font-size: 16px;">{h2}</strong><br>
-                <span style="color: #666; font-size: 14px; display: inline-block; margin-top: 5px;"><strong>Przykładowy (nowy) BLUF:</strong> {bluf}</span>
+            structure_html += f"""
+            <div class="structure-block">
+                <strong style="font-size: 16px;">{esc(entry.heading)}</strong><br>
+                <span class="bluf"><strong>Przykładowy (nowy) BLUF:</strong> {esc(entry.bluf)}</span>
             </div>
             """
     else:
-        html_content += "<p style='color: #666;'>Brak specyficznych rekomendacji dla nagłówków.</p>"
-    html_content += "</div>"
+        structure_html = "<p style='color: var(--muted);'>Brak specyficznych rekomendacji dla nagłówków.</p>"
 
-    # EEAT and TF-IDF HTML
     eeat_miss = []
     for e in scores.eeat_signals:
         if e.missing_signals and e.missing_signals.strip() != "":
-            eeat_miss.append(f"[{e.dimension}]: {e.missing_signals}")
-            
-    tf_idf = ", ".join(scores.missing_tf_idf_terms) if hasattr(scores, 'missing_tf_idf_terms') and scores.missing_tf_idf_terms else "Brak"
-    
-    html_content += f"""
-    <div class="details-section">
-        <h2>Sygnały E-E-A-T i Brakujące Frazy (TF-IDF)</h2>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-            <div>
-                <h4 style="margin-top: 0; color: #2c3e50;">Braki E-E-A-T</h4>
-                <ul style="padding-left: 20px; color: #666; font-size: 14px;">
-                    {''.join([f'<li>{e}</li>' for e in eeat_miss]) if eeat_miss else '<li>Brak istotnych braków w sygnałach E-E-A-T.</li>'}
-                </ul>
+            eeat_miss.append(f"[{esc(e.dimension)}]: {esc(e.missing_signals)}")
+
+    tf_idf = ", ".join(esc(t) for t in scores.missing_tf_idf_terms) if scores.missing_tf_idf_terms else "Brak"
+    eeat_list_html = ''.join(f'<li>{e}</li>' for e in eeat_miss) if eeat_miss else '<li>Brak istotnych braków w sygnałach E-E-A-T.</li>'
+
+    dots_div = '<div class="dots"></div>' if theme["dots_overlay"] else ""
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{esc(title)}</title>
+    {_chartjs_inline()}
+    <style>{_base_css(theme)}</style>
+</head>
+<body>
+    {dots_div}
+    {_brand_header(theme)}
+    <div class="container">
+        <div class="header">
+            <h1>{esc(title)}</h1>
+            <p><strong>URL:</strong> <a href="{esc(url)}" target="_blank">{esc(url)}</a> | <strong>Fraza:</strong> {esc(keyword)}</p>
+        </div>
+
+        {_wstep_html(theme)}
+
+        <div class="grid-top">
+            <div class="left-col">
+                <div class="score-cards">
+                    <div class="score-card">
+                        <span class="score-title">Content Quality Score</span>
+                        <div>
+                            <span class="score-value" style="color: {cqs_color};">{esc(report.cqs_score)}</span><span class="score-max"> / 100</span>
+                        </div>
+                    </div>
+                    <div class="score-card">
+                        <span class="score-title">AI Citability Score</span>
+                        <div>
+                            <span class="score-value" style="color: {ai_color};">{esc(report.ai_citability_score)}</span><span class="score-max"> / 10</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="summary-card">
+                    <div class="summary-text">
+                        Zidentyfikowano <strong>{crit_high_count} problemów krytycznych/ważnych.</strong><br><br>
+                        <strong>Podsumowanie:</strong> {esc(report.executive_summary)}
+                    </div>
+                </div>
             </div>
-            <div>
-                <h4 style="margin-top: 0; color: #2c3e50;">Brakujące powiązane frazy (TF-IDF)</h4>
-                <p style="color: #666; font-size: 14px; line-height: 1.6;">{tf_idf}</p>
+
+            <div class="chart-card">
+                <div class="chart-title">Profil wymiarów</div>
+                <div class="canvas-container">
+                    <canvas id="radarChart"></canvas>
+                </div>
             </div>
         </div>
+
+        <div class="summary-card" style="margin-bottom: 20px;">
+            <div class="quick-wins-title">QUICK WINS ({crit_high_count})</div>
+            {quick_wins_html}
+        </div>
+
+        <div class="details-section">
+            <h2>Wszystkie Rekomendacje</h2>
+            {recommendations_html}
+        </div>
+
+        <div class="details-section">
+            <h2>Matrix EAV (Entity-Attribute-Value)</h2>
+            <div style="overflow-x: auto;">
+            <table class="eav-table">
+                <thead>
+                    <tr>
+                        <th>Atrybut</th>
+                        <th>Typ</th>
+                        <th>Pokrycie</th>
+                        <th>Priorytet</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {eav_rows_html}
+                </tbody>
+            </table>
+            </div>
+        </div>
+
+        <div class="details-section">
+            <h2>Docelowa Struktura Nagłówków (H1-H3) i BLUF</h2>
+            {structure_html}
+        </div>
+
+        <div class="details-section">
+            <h2>Sygnały E-E-A-T i Brakujące Frazy (TF-IDF)</h2>
+            <div class="two-col-grid">
+                <div>
+                    <h4>Braki E-E-A-T</h4>
+                    <ul>
+                        {eeat_list_html}
+                    </ul>
+                </div>
+                <div>
+                    <h4>Brakujące powiązane frazy (TF-IDF)</h4>
+                    <p>{tf_idf}</p>
+                </div>
+            </div>
+        </div>
+
+        {_brand_footer(theme)}
     </div>
-    """
 
-    html_content += f"""
-        </div>
-
-        <script>
-            const ctx = document.getElementById('radarChart').getContext('2d');
-            new Chart(ctx, {{
-                type: 'radar',
-                data: {{
-                    labels: {chart_labels_json},
-                    datasets: [{{
-                        label: 'Wynik Wymiaru',
-                        data: {chart_data_json},
-                        backgroundColor: 'rgba(26, 147, 140, 0.2)',
-                        borderColor: 'rgba(26, 147, 140, 0.8)',
-                        pointBackgroundColor: 'rgba(26, 147, 140, 1)',
-                        pointBorderColor: '#fff',
-                        pointHoverBackgroundColor: '#fff',
-                        pointHoverBorderColor: 'rgba(26, 147, 140, 1)',
-                        borderWidth: 2,
-                    }}]
-                }},
-                options: {{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {{
-                        r: {{
-                            beginAtZero: true,
-                            min: 0,
-                            max: 10,
-                            angleLines: {{ color: 'rgba(0, 0, 0, 0.05)' }},
-                            grid: {{ color: 'rgba(0, 0, 0, 0.05)' }},
-                            pointLabels: {{
-                                font: {{ size: 12, family: "'Manrope', sans-serif", weight: '600' }},
-                                color: '#5B6B80'
-                            }},
-                            ticks: {{
-                                stepSize: 2,
-                                display: false
-                            }}
-                        }}
-                    }},
-                    plugins: {{
-                        legend: {{ display: false }}
-                    }}
-                }}
-            }});
-        </script>
-    </body>
-    </html>
-    """
+    <script>
+        {_radar_chart_js(theme, "radarChart", chart_labels_json, chart_data_json)}
+    </script>
+</body>
+</html>
+"""
     return html_content.encode("utf-8")
 
 
-def generate_master_html_report(all_results: list) -> bytes:
+def generate_master_html_report(all_results: list, theme_key: str = "PG") -> bytes:
+    theme = get_theme(theme_key)
+
     # Sort results by CQS score ascending
     sorted_results = sorted(all_results, key=lambda x: x.get("report").cqs_score if x.get("report") else 100)
-    
-    WSTEP_HTML = """
-    <details class="wstep-details" style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); border-left: 4px solid #003366;">
-        <summary style="font-size: 18px; font-weight: 600; cursor: pointer; color: #003366;">Wstęp i definicje (Rozwiń)</summary>
-        <div style="margin-top: 20px; font-size: 15px; color: #4a4a4a; line-height: 1.6;">
-            <h3 style="margin-top: 0;">Wstęp do Audytu Semantycznego: Jak Google i AI "czytają" Twoje treści?</h3>
-            <p>Celem tego audytu nie jest tylko sprawdzenie, czy tekst "dobrze się czyta" ludziom. Naszym głównym zadaniem jest dostosowanie treści do sposobu, w jaki analizują ją <strong>algorytmy Google oraz nowoczesne modele AI</strong> (takie jak ChatGPT czy Google AI Overviews).</p>
-            <p>Audyt składa się z <strong>3 głównych filarów</strong>, które sprawdzają treść pod kątem co najmniej 12 kluczowych kryteriów:</p>
-            <ol>
-            <li><strong>Zgodność z Central Search Intent (CSI)</strong> – czy algorytm rozumie, o czym dokładnie piszesz i dla kogo?</li>
-            <li><strong>Jakość treści</strong> – jak kosztowna i trudna w interpretacji jest Twoja strona dla robota?</li>
-            <li><strong>Ocena E-E-A-T</strong> – czy Google uważa Cię za wiarygodnego eksperta?</li>
-            </ol>
-            
-            <hr style="border: 0; border-top: 1px solid #ebeef5; margin: 20px 0;">
-            
-            <h4 style="color: #006699;">1. Zgodność z Central Search Intent (CSI)</h4>
-            <p><em>(Analiza: EAV GAP + BLUF + Chunk + URR)</em><br>
-            Tutaj sprawdzamy, czy Twój artykuł odpowiada na intencję użytkownika i czy jest zbudowany tak, aby maszyna mogła bezbłędnie zidentyfikować temat przewodni.</p>
-            <ul>
-            <li><strong>Central Search Intent (CSI):</strong> To matematyczne połączenie tematu (Encji) z kontekstem źródła. Algorytm musi wiedzieć, z jakiej perspektywy opisujesz temat.</li>
-            <li><strong>Entity-Attribute-Value (EAV):</strong> Google dąży do wyekstrahowania z tekstu "suchych faktów" i zapisania ich w tabeli (Grafie Wiedzy). Sprawdzimy, czy Twój tekst to "lita ściana tekstu", czy ustrukturyzowana baza wiedzy.</li>
-            <li><strong>BLUF (Bottom Line Up Front):</strong> Najważniejsza informacja musi znaleźć się na początku. Google i AI często skanują tylko początek sekcji.</li>
-            <li><strong>CHUNK (Fragmentacja pod RAG):</strong> Każda sekcja pod nagłówkiem powinna być samodzielną, wyczerpującą odpowiedzią na dany problem.</li>
-            <li><strong>URR (Unique, Root, Rare):</strong> Aby content był uznany za wybitny, musisz ułożyć atrybuty encji w odpowiedniej hierarchii (definiujące, wyróżniające, niszowe).</li>
-            </ul>
-
-            <hr style="border: 0; border-top: 1px solid #ebeef5; margin: 20px 0;">
-
-            <h4 style="color: #006699;">2. Jakość treści</h4>
-            <p><em>(Analiza: CoR + Information Density + SRL + TF-IDF)</em><br>
-            W tej sekcji mierzymy efektywność Twojego tekstu. Czy dostarczasz wiedzę szybko i konkretnie, czy zmuszasz Google do "marnowania prądu"?</p>
-            <ul>
-            <li><strong>CoR (Cost of Retrieval):</strong> Wydatek obliczeniowy, jaki wyszukiwarka ponosi na przeczytanie Twojej strony. Google wybierze konkurencję, która dostarczy tę samą wiedzę "taniej".</li>
-            <li><strong>Information Density (Gęstość Informacji):</strong> Stosunek konkretnych faktów do "puchu" (fluff). Im więcej faktów i konkretów, tym wyższa ocena.</li>
-            <li><strong>SRL (Semantic Role Labeling):</strong> To gramatyka dla robotów. Wskazanie: Kto? Co robi? Komu? Należy usuwać stronę bierną, aby Twoja Encja była "Bohaterem" zdania.</li>
-            <li><strong>TF-IDF (Trafność terminologiczna):</strong> Ocena używania specjalistycznego i rzadkiego słownictwa (IDF), które daje silny sygnał bycia ekspertem.</li>
-            </ul>
-
-            <hr style="border: 0; border-top: 1px solid #ebeef5; margin: 20px 0;">
-
-            <h4 style="color: #006699;">3. Ocena E-E-A-T</h4>
-            <p><em>(Experience, Expertise, Authoritativeness, Trustworthiness)</em><br>
-            System, którym Google ocenia wiarygodność Twoją i Twojej strony (krytyczne dla branż YMYL).</p>
-            <ul>
-            <li><strong>Experience:</strong> Czy widać dowody używania produktu/przeżycia doświadczenia (własne zdjęcia, opis odczuć)?</li>
-            <li><strong>Expertise:</strong> Czy autor ma wiedzę formalną?</li>
-            <li><strong>Authoritativeness:</strong> Czy inni eksperci cytują tę stronę?</li>
-            <li><strong>Trust:</strong> Czy strona jest bezpieczna i prawdziwa?</li>
-            </ul>
-        </div>
-    </details>
-    """
 
     total_cqs = 0
     total_ai_cit = 0
     excellent_count = 0
     needs_improvement_count = 0
     total_articles = 0
-    
+
     rows_html = ""
     chart_scripts = ""
-    
+
     for item in sorted_results:
         url = item.get("url", "")
         keyword = item.get("keyword", "")
         r = item.get("report")
         s = item.get("scores")
-        
+
         if not r:
             continue
-            
+
         total_articles += 1
         total_cqs += r.cqs_score
         total_ai_cit += r.ai_citability_score
-        
+
         if r.cqs_score >= 80:
             excellent_count += 1
         else:
             needs_improvement_count += 1
-            
-        ai_badge_color = "#67c23a" if r.ai_citability_score >= 8 else "#e6a23c"
-        
-        crit = [f"<li><strong>[{rec.title}]</strong><br><span style='color:#666;font-size:13px;'>Obecna treść: {rec.before_quote}<br>Przykładowa (nowa) treść: {rec.after_generated}</span></li>" for rec in r.recommendations if rec.priority.upper() == "KRYTYCZNE"]
-        high = [f"<li><strong>[{rec.title}]</strong><br><span style='color:#666;font-size:13px;'>Obecna treść: {rec.before_quote}<br>Przykładowa (nowa) treść: {rec.after_generated}</span></li>" for rec in r.recommendations if rec.priority.upper() == "WYSOKIE"]
-        med  = [f"<li><strong>[{rec.title}]</strong><br><span style='color:#666;font-size:13px;'>Obecna treść: {rec.before_quote}<br>Przykładowa (nowa) treść: {rec.after_generated}</span></li>" for rec in r.recommendations if rec.priority.upper() == "ŚREDNIE"]
-        
+
+        ai_badge_color = theme["good"] if r.ai_citability_score >= 8 else theme["warn"]
+
+        def rec_li(rec):
+            return (
+                f"<li><strong>[{esc(rec.title)}]</strong><br>"
+                f"<span style='color:var(--muted);font-size:13px;'>Obecna treść: {esc(rec.before_quote)}<br>"
+                f"Przykładowa (nowa) treść: {esc(rec.after_generated)}</span></li>"
+            )
+
+        crit = [rec_li(rec) for rec in r.recommendations if rec.priority.upper() == "KRYTYCZNE"]
+        high = [rec_li(rec) for rec in r.recommendations if rec.priority.upper() == "WYSOKIE"]
+        med = [rec_li(rec) for rec in r.recommendations if rec.priority.upper() == "ŚREDNIE"]
+
         structure = []
         if getattr(r, "target_structure", None):
             for entry in r.target_structure:
-                structure.append(f"<li><strong>{entry.heading}</strong> (Przykładowy (nowy) BLUF: {entry.bluf})</li>")
-            
+                structure.append(f"<li><strong>{esc(entry.heading)}</strong> (Przykładowy (nowy) BLUF: {esc(entry.bluf)})</li>")
+
         eeat_miss = []
         if s and hasattr(s, "eeat_signals"):
             for e in s.eeat_signals:
                 if e.missing_signals and e.missing_signals.strip() != "":
-                    eeat_miss.append(f"<li>[{e.dimension}]: {e.missing_signals}</li>")
-                    
-        tf_idf = ", ".join(s.missing_tf_idf_terms) if s and hasattr(s, 'missing_tf_idf_terms') and s.missing_tf_idf_terms else "Brak"
-        
-        import json
-        chart_labels = [e.dimension for e in s.eeat_signals] if s and hasattr(s, "eeat_signals") else []
-        chart_data = [e.score for e in s.eeat_signals] if s and hasattr(s, "eeat_signals") else []
-        chart_labels_json = json.dumps(chart_labels)
+                    eeat_miss.append(f"<li>[{esc(e.dimension)}]: {esc(e.missing_signals)}</li>")
+
+        tf_idf = ", ".join(esc(t) for t in s.missing_tf_idf_terms) if s and getattr(s, "missing_tf_idf_terms", None) else "Brak"
+
+        chart_labels = [d.dimension_name for d in s.dimensions] if s and getattr(s, "dimensions", None) else []
+        chart_data = [d.score for d in s.dimensions] if s and getattr(s, "dimensions", None) else []
+        chart_labels_json = json.dumps(chart_labels, ensure_ascii=False)
         chart_data_json = json.dumps(chart_data)
-        
+
         canvas_id = f"radarChart_{total_articles}"
-        
-        chart_scripts += f"""
-            const ctx_{total_articles} = document.getElementById('{canvas_id}').getContext('2d');
-            new Chart(ctx_{total_articles}, {{
-                type: 'radar',
-                data: {{
-                    labels: {chart_labels_json},
-                    datasets: [{{
-                        label: 'Wynik Wymiaru',
-                        data: {chart_data_json},
-                        backgroundColor: 'rgba(26, 147, 140, 0.2)',
-                        borderColor: 'rgba(26, 147, 140, 0.8)',
-                        pointBackgroundColor: 'rgba(26, 147, 140, 1)',
-                        pointBorderColor: '#fff',
-                        pointHoverBackgroundColor: '#fff',
-                        pointHoverBorderColor: 'rgba(26, 147, 140, 1)',
-                        borderWidth: 2,
-                    }}]
-                }},
-                options: {{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {{
-                        r: {{
-                            beginAtZero: true,
-                            min: 0,
-                            max: 10,
-                            angleLines: {{ color: 'rgba(0, 0, 0, 0.05)' }},
-                            grid: {{ color: 'rgba(0, 0, 0, 0.05)' }},
-                            pointLabels: {{
-                                font: {{ size: 10, family: "'Manrope', sans-serif", weight: '600' }},
-                                color: '#5B6B80'
-                            }},
-                            ticks: {{ stepSize: 2, display: false }}
-                        }}
-                    }},
-                    plugins: {{ legend: {{ display: false }} }}
-                }}
-            }});
-        """
-        
+        chart_scripts += _radar_chart_js(theme, canvas_id, chart_labels_json, chart_data_json, label_font_size=10)
+
         crit_high_count = len([rec for rec in r.recommendations if rec.priority.upper() in ["KRYTYCZNE", "WYSOKIE"]])
-        
+
         g = item.get("gap_analysis")
         eav_rows = ""
         if g and hasattr(g, "eav_matrix"):
             for e in g.eav_matrix:
                 eav_rows += f"""
-                <tr style="border-bottom: 1px solid #ebeef5;">
-                    <td style="padding: 10px;">{e.attribute}</td>
-                    <td style="padding: 10px;">{e.urr_type}</td>
-                    <td style="padding: 10px;">{e.coverage}</td>
-                    <td style="padding: 10px;">{e.priority}</td>
-                    <td style="padding: 10px;">{e.status}</td>
+                <tr>
+                    <td>{esc(e.attribute)}</td>
+                    <td>{esc(e.urr_type)}</td>
+                    <td>{esc(e.coverage)}</td>
+                    <td>{esc(e.priority)}</td>
+                    <td>{esc(e.status)}</td>
                 </tr>
                 """
-        
+
         eav_table_html = f"""
         <div class="data-card" style="grid-column: 1 / -1; margin-top: 20px;">
             <h4>Matrix EAV:</h4>
             <div style="overflow-x: auto;">
-                <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                <table class="eav-table" style="font-size: 13px;">
                     <thead>
-                        <tr style="background-color: #f8f9fa; border-bottom: 2px solid #ebeef5;">
-                            <th style="padding: 10px; text-align: left;">Atrybut</th>
-                            <th style="padding: 10px; text-align: left;">Typ</th>
-                            <th style="padding: 10px; text-align: left;">Pokrycie</th>
-                            <th style="padding: 10px; text-align: left;">Priorytet</th>
-                            <th style="padding: 10px; text-align: left;">Status</th>
+                        <tr>
+                            <th>Atrybut</th>
+                            <th>Typ</th>
+                            <th>Pokrycie</th>
+                            <th>Priorytet</th>
+                            <th>Status</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -681,43 +758,43 @@ def generate_master_html_report(all_results: list) -> bytes:
             </div>
         </div>
         """
-        
+
         rows_html += f"""
         <details class="url-details">
             <summary class="url-summary">
                 <div class="sum-row">
-                    <span class="s-url">{url}</span>
-                    <span class="s-score">CQS: {r.cqs_score}/100 | AI Cit: <span style="color:{ai_badge_color}">{r.ai_citability_score}/10</span></span>
+                    <span class="s-url">{esc(url)}</span>
+                    <span class="s-score">CQS: {esc(r.cqs_score)}/100 | AI Cit: <span style="color:{ai_badge_color}">{esc(r.ai_citability_score)}/10</span></span>
                 </div>
             </summary>
             <div class="details-content">
-                <p><strong>Fraza:</strong> {keyword}</p>
-                
+                <p><strong>Fraza:</strong> {esc(keyword)}</p>
+
                 <div class="grid-top" style="margin-bottom: 20px;">
                     <div class="left-col">
                         <div class="score-cards">
                             <div class="score-card">
                                 <span class="score-title">CQS</span>
                                 <div>
-                                    <span class="score-value">{r.cqs_score}</span><span class="score-max"> / 100</span>
+                                    <span class="score-value">{esc(r.cqs_score)}</span><span class="score-max"> / 100</span>
                                 </div>
                             </div>
                             <div class="score-card">
                                 <span class="score-title">AI Citability</span>
                                 <div>
-                                    <span class="score-value" style="color: {ai_badge_color};">{r.ai_citability_score}</span><span class="score-max"> / 10</span>
+                                    <span class="score-value" style="color: {ai_badge_color};">{esc(r.ai_citability_score)}</span><span class="score-max"> / 10</span>
                                 </div>
                             </div>
                         </div>
-                        
+
                         <div class="summary-card">
                             <div class="summary-text">
                                 Zidentyfikowano <strong>{crit_high_count} problemów krytycznych/ważnych.</strong><br><br>
-                                <strong>Podsumowanie:</strong> {r.executive_summary}
+                                <strong>Podsumowanie:</strong> {esc(r.executive_summary)}
                             </div>
                         </div>
                     </div>
-                    
+
                     <div class="chart-card">
                         <div class="chart-title">Profil wymiarów</div>
                         <div class="canvas-container" style="height: 250px;">
@@ -725,15 +802,14 @@ def generate_master_html_report(all_results: list) -> bytes:
                         </div>
                     </div>
                 </div>
-                
+
                 <div class="card-grid">
                     <div class="data-card">
                         <h4>Rekomendacje:</h4>
                         <ul class="data-list">
-                            {''.join(crit) if crit else ''}
-                            {''.join(high) if high else ''}
-                            {''.join(med) if med else ''}
-                            {'' if not (crit or high or med) else ''}
+                            {''.join(crit)}
+                            {''.join(high)}
+                            {''.join(med)}
                         </ul>
                     </div>
                     <div class="data-card">
@@ -750,172 +826,175 @@ def generate_master_html_report(all_results: list) -> bytes:
                     </div>
                     <div class="data-card">
                         <h4>Brakujące Słowa (TF-IDF):</h4>
-                        <p style="font-size: 14px; color: #666; margin: 0;">{tf_idf}</p>
+                        <p style="font-size: 14px; color: var(--muted); margin: 0;">{tf_idf}</p>
                     </div>
                     {eav_table_html}
                 </div>
             </div>
         </details>
         """
-        
+
     avg_cqs = round(total_cqs / total_articles, 2) if total_articles > 0 else 0
     avg_ai = round(total_ai_cit / total_articles, 2) if total_articles > 0 else 0
-    
-    html_content = f"""
-    <!DOCTYPE html>
-    <html lang="pl">
-    <head>
-        <meta charset="UTF-8">
-        <title>Zbiorczy Raport Audytu Masowego</title>
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        <style>
-            @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
-            body {{
-                font-family: 'Manrope', sans-serif;
-                background-color: #f4f6f9;
-                color: #0A2540;
-                padding: 40px 20px;
-                margin: 0;
-            }}
-            .container {{
-                max-width: 1000px;
-                margin: 0 auto;
-            }}
-            .summary-box {{
-                background: white;
-                padding: 30px;
-                border-radius: 16px;
-                box-shadow: 0 8px 30px rgba(0,0,0,0.04);
-                margin-bottom: 30px;
-                border: 1px solid #E2E8F0;
-            }}
-            .summary-box h1 {{ margin-top: 0; font-size: 24px; font-weight: 800; color: #006699; }}
-            .stats {{
-                display: flex;
-                gap: 20px;
-                margin-top: 20px;
-            }}
-            .stat-card {{
-                background: #fdfaf3;
-                border: 1px solid #f2eed8;
-                padding: 20px;
-                border-radius: 8px;
-                flex: 1;
-                text-align: center;
-            }}
-            .stat-val {{ font-size: 32px; font-weight: bold; color: #e6a23c; display: block; }}
-            .url-details {{
-                background: white;
-                margin-bottom: 15px;
-                border-radius: 12px;
-                box-shadow: 0 4px 20px rgba(0,0,0,0.03);
-                overflow: hidden;
-                border: 1px solid #E2E8F0;
-            }}
-            .url-summary {{
-                padding: 20px;
-                padding-left: 45px;
-                cursor: pointer;
-                font-weight: 500;
-                list-style: none;
-                position: relative;
-            }}
-            .url-summary::-webkit-details-marker {{ display: none; }}
-            .url-summary::before {{
-                content: '▶';
-                position: absolute;
-                left: 20px;
-                top: 50%;
-                transform: translateY(-50%);
-                color: #006699;
-                transition: transform 0.2s ease;
-                font-size: 14px;
-            }}
-            .url-details[open] .url-summary::before {{
-                transform: translateY(-50%) rotate(90deg);
-            }}
-            .sum-row {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }}
-            .s-url {{
-                flex-grow: 1;
-                font-weight: 600;
-                color: #2c3e50;
-                word-break: break-all;
-                padding-right: 15px;
-                font-size: 13px;
-            }}
-            .s-score {{
-                white-space: nowrap;
-                color: #555;
-                font-size: 13px;
-            }}
-            .details-content {{
-                padding: 0 20px 20px 20px;
-                border-top: 1px solid #eee;
-                margin-top: 10px;
-                padding-top: 20px;
-            }}
-            .card-grid {{
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 20px;
-                margin-top: 20px;
-            }}
-            .data-card {{
-                background: #fdfaf3;
-                border: 1px solid #f2eed8;
-                border-radius: 8px;
-                padding: 20px;
-            }}
-            .data-card h4 {{
-                margin-top: 0;
-                margin-bottom: 15px;
-                color: #2c3e50;
-                border-bottom: 1px solid #e5eaef;
-                padding-bottom: 10px;
-                font-size: 15px;
-            }}
-            .data-list {{
-                font-size: 14px;
-                margin: 0;
-                padding-left: 20px;
-            }}
-            li {{ margin-bottom: 8px; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="summary-box">
-                <h1>Zbiorczy Raport Audytu (Master HTML)</h1>
-                <p>Sprawdzono <strong>{total_articles}</strong> artykułów. <strong>{excellent_count}</strong> z nich ma ocenę bardzo dobrą, <strong>{needs_improvement_count}</strong> jest do poprawy.</p>
-                <div class="stats">
-                    <div class="stat-card">
-                        <span class="stat-val">{total_articles}</span>
-                        <span>Przeanalizowane URL</span>
-                    </div>
-                    <div class="stat-card">
-                        <span class="stat-val" style="color: #409eff;">{avg_cqs}</span>
-                        <span>Średni Wynik CQS</span>
-                    </div>
-                    <div class="stat-card">
-                        <span class="stat-val" style="color: #67c23a;">{avg_ai}</span>
-                        <span>Średnie AI Citability</span>
-                    </div>
+
+    dots_div = '<div class="dots"></div>' if theme["dots_overlay"] else ""
+
+    master_css = f"""
+        .summary-box {{
+            background: var(--card-bg);
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.04);
+            margin-bottom: 30px;
+            border: 1px solid var(--line);
+        }}
+        .summary-box h1 {{ margin-top: 0; font-size: 24px; font-weight: 800; color: var(--navy2); }}
+        .stats {{
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+        }}
+        .stat-card {{
+            background: var(--card-soft);
+            border: 1px solid var(--card-soft-border);
+            padding: 20px;
+            border-radius: 8px;
+            flex: 1;
+            text-align: center;
+        }}
+        .stat-val {{ font-size: 32px; font-weight: bold; display: block; }}
+        .url-details {{
+            background: var(--card-bg);
+            margin-bottom: 15px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.03);
+            overflow: hidden;
+            border: 1px solid var(--line);
+        }}
+        .url-summary {{
+            padding: 20px;
+            padding-left: 45px;
+            cursor: pointer;
+            font-weight: 500;
+            list-style: none;
+            position: relative;
+        }}
+        .url-summary::-webkit-details-marker {{ display: none; }}
+        .url-summary::before {{
+            content: '▶';
+            position: absolute;
+            left: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--navy2);
+            transition: transform 0.2s ease;
+            font-size: 14px;
+        }}
+        .url-details[open] .url-summary::before {{
+            transform: translateY(-50%) rotate(90deg);
+        }}
+        .sum-row {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .s-url {{
+            flex-grow: 1;
+            font-weight: 600;
+            color: var(--text-main);
+            word-break: break-all;
+            padding-right: 15px;
+            font-size: 13px;
+        }}
+        .s-score {{
+            white-space: nowrap;
+            color: var(--muted);
+            font-size: 13px;
+        }}
+        .details-content {{
+            padding: 0 20px 20px 20px;
+            border-top: 1px solid var(--line);
+            margin-top: 10px;
+            padding-top: 20px;
+        }}
+        .card-grid {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }}
+        .data-card {{
+            background: var(--card-soft);
+            border: 1px solid var(--card-soft-border);
+            border-radius: 8px;
+            padding: 20px;
+        }}
+        .data-card h4 {{
+            margin-top: 0;
+            margin-bottom: 15px;
+            color: var(--text-main);
+            border-bottom: 1px solid var(--line);
+            padding-bottom: 10px;
+            font-size: 15px;
+        }}
+        .data-list {{
+            font-size: 14px;
+            margin: 0;
+            padding-left: 20px;
+        }}
+        li {{ margin-bottom: 8px; }}
+        @media (max-width: 900px) {{
+            .card-grid {{ grid-template-columns: 1fr; }}
+            .stats {{ flex-direction: column; }}
+        }}
+    """
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zbiorczy Raport Audytu Masowego</title>
+    {_chartjs_inline()}
+    <style>
+        {_base_css(theme)}
+        {master_css}
+    </style>
+</head>
+<body>
+    {dots_div}
+    {_brand_header(theme)}
+    <div class="container" style="max-width: 1000px;">
+        <div class="summary-box">
+            <h1>Zbiorczy Raport Audytu (Master HTML)</h1>
+            <p>Sprawdzono <strong>{total_articles}</strong> artykułów. <strong>{excellent_count}</strong> z nich ma ocenę bardzo dobrą, <strong>{needs_improvement_count}</strong> jest do poprawy.</p>
+            <div class="stats">
+                <div class="stat-card">
+                    <span class="stat-val" style="color: var(--accent);">{total_articles}</span>
+                    <span>Przeanalizowane URL</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-val" style="color: var(--navy2);">{avg_cqs}</span>
+                    <span>Średni Wynik CQS</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-val" style="color: var(--good);">{avg_ai}</span>
+                    <span>Średnie AI Citability</span>
                 </div>
             </div>
-            
-            {WSTEP_HTML}
-            
-            <h2>Lista Artykułów</h2>
-            {rows_html}
         </div>
-        <script>
-            {chart_scripts}
-        </script>
-    </body>
-    </html>
-    """
+
+        {_wstep_html(theme)}
+
+        <h2>Lista Artykułów</h2>
+        {rows_html}
+
+        {_brand_footer(theme)}
+    </div>
+    <script>
+        {chart_scripts}
+    </script>
+</body>
+</html>
+"""
     return html_content.encode("utf-8")
