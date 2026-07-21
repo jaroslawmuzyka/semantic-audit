@@ -143,7 +143,7 @@ def generate_excel_report(gap_analysis: GapAnalysisResult, scores: ContentScores
 
         # Sheet 4: Scores
         scores_data = []
-        for s in scores.dimensions:
+        for s in scores.dimensions.as_list():
             scores_data.append({
                 "Dimension": s.dimension_name,
                 "Score (0-10)": s.score,
@@ -247,7 +247,7 @@ def generate_master_excel_report(all_results: list, theme_key: str = "PG") -> by
         }
 
         # Dimensions
-        for dim in s.dimensions:
+        for dim in s.dimensions.as_list():
             row_full[f"{dim.dimension_name} Score"] = dim.score
             row_full[f"{dim.dimension_name} Problem"] = dim.top_problem
 

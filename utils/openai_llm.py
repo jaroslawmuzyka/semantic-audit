@@ -33,6 +33,44 @@ class ScoreDimension(BaseModel):
     top_problem: str
     before_quote: str
 
+class DimensionDetail(BaseModel):
+    score: int
+    top_problem: str
+    before_quote: str
+
+class NineDimensions(BaseModel):
+    """Sztywna struktura 9 wymiarów oceny treści (Krok 5).
+
+    Tak samo jak EEATBreakdown poniżej — zamiast dowolnej listy (w której model
+    potrafił dokładać dodatkowe, nieprzewidziane "wymiary", np. duplikując
+    Experience/Expertise/Authority/Trust z E-E-A-T albo wymyślając własne jak
+    "EEAT Alignment Note", co rozjeżdżało wykres Profil wymiarów w raporcie),
+    każdy z 9 wymiarów ma tu własne, obowiązkowe pole.
+    """
+    csi_alignment: DimensionDetail
+    bluf: DimensionDetail
+    chunk_quality: DimensionDetail
+    urr_placement: DimensionDetail
+    cost_of_retrieval: DimensionDetail
+    information_density: DimensionDetail
+    srl_salience: DimensionDetail
+    tf_idf_quality: DimensionDetail
+    eeat: DimensionDetail
+
+    def as_list(self) -> List[ScoreDimension]:
+        order = [
+            ("CSI Alignment", self.csi_alignment),
+            ("BLUF", self.bluf),
+            ("Chunk Quality", self.chunk_quality),
+            ("URR Placement", self.urr_placement),
+            ("Cost of Retrieval", self.cost_of_retrieval),
+            ("Information Density", self.information_density),
+            ("SRL Salience", self.srl_salience),
+            ("TF-IDF Quality", self.tf_idf_quality),
+            ("EEAT", self.eeat),
+        ]
+        return [ScoreDimension(dimension_name=name, **d.model_dump()) for name, d in order]
+
 class ProblematicFragment(BaseModel):
     section: str
     dimension: str
@@ -76,7 +114,7 @@ class EEATBreakdown(BaseModel):
         ]
 
 class ContentScores(BaseModel):
-    dimensions: List[ScoreDimension]
+    dimensions: NineDimensions
     problematic_fragments: List[ProblematicFragment]
     srl_patient_instances: List[SRLInstance]
     eeat_signals: EEATBreakdown

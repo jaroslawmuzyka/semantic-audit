@@ -16,12 +16,30 @@ from openpyxl.utils import get_column_letter
 
 from utils.openai_llm import (
     analyze_eeat_only, EAVEntry, GapAnalysisResult, ScoreDimension, ContentScores,
-    EEATDetail, EEATBreakdown, Recommendation, TargetHeading, AuditReport,
+    DimensionDetail, NineDimensions, EEATDetail, EEATBreakdown, Recommendation,
+    TargetHeading, AuditReport,
 )
 from utils.naming import safe_filename
 from utils.themes import THEMES, THEME_KEYS
 
 EEAT_ORDER = ["Experience", "Expertise", "Authority", "Trust"]
+
+# Musi się zgadzać z kolejnością/nazwami pól w NineDimensions.as_list() (utils/openai_llm.py) —
+# to jedyne 9 kolumn "X Score"/"X Problem", które rekonstrukcja z master XLSX bierze pod uwagę.
+# Wszelkie inne, nieprzewidziane kolumny "X Problem" (pozostałość sprzed wymuszenia sztywnego
+# schematu — np. zduplikowane Experience/Expertise/Authority/Trust albo wymyślone przez model
+# "EEAT Alignment Note") są tym samym świadomie ignorowane przy przebudowie pliku.
+NINE_DIMENSIONS_ORDER = [
+    ("CSI Alignment", "csi_alignment"),
+    ("BLUF", "bluf"),
+    ("Chunk Quality", "chunk_quality"),
+    ("URR Placement", "urr_placement"),
+    ("Cost of Retrieval", "cost_of_retrieval"),
+    ("Information Density", "information_density"),
+    ("SRL Salience", "srl_salience"),
+    ("TF-IDF Quality", "tf_idf_quality"),
+    ("EEAT", "eeat"),
+]
 
 _ALIGN_TOP_WRAP = Alignment(vertical="top", wrap_text=True)
 
@@ -446,12 +464,6 @@ def reconstruct_results_from_master_xlsx(file_bytes: bytes) -> dict:
     if "URL" not in idx_full:
         return {}
 
-    # Kolejność zachowana taka, w jakiej kolumny występują w arkuszu (czyli taka, w jakiej
-    # model oryginalnie zwrócił wymiary) — inaczej "Profil wymiarów" (wykres radarowy)
-    # rozjeżdża się względem oryginalnego raportu po przebudowie mastera.
-    dimension_names = list(dict.fromkeys(
-        h[:-len(" Problem")] for h in headers_full if h and h.endswith(" Problem")
-    ))
     rec_indices = sorted({
         int(m.group(1)) for h in headers_full if h
         for m in [re.match(r"^Rec (\d+) Priority$", h)] if m
@@ -469,15 +481,18 @@ def reconstruct_results_from_master_xlsx(file_bytes: bytes) -> dict:
             i = idx_full.get(name)
             return r[i] if i is not None else default
 
-        dimensions = [
-            ScoreDimension(
-                dimension_name=dim,
-                score=int(gv(f"{dim} Score") or 0),
-                top_problem=str(gv(f"{dim} Problem") or ""),
+        # Czytamy WYŁĄCZNIE 9 kanonicznych wymiarów po ich ustalonej nazwie — to celowo
+        # ignoruje (i tym samym "leczy" przy przebudowie) wszelkie inne, nieprzewidziane
+        # kolumny "X Problem", które mogły powstać, gdy model (przed wymuszeniem sztywnego
+        # schematu NineDimensions) dokładał sobie dodatkowe pseudo-wymiary.
+        dim_kwargs = {}
+        for display_name, field_name in NINE_DIMENSIONS_ORDER:
+            dim_kwargs[field_name] = DimensionDetail(
+                score=int(gv(f"{display_name} Score") or 0),
+                top_problem=str(gv(f"{display_name} Problem") or ""),
                 before_quote="",
             )
-            for dim in dimension_names
-        ]
+        dimensions = NineDimensions(**dim_kwargs)
 
         eeat_kwargs = {}
         for dim, field in zip(EEAT_ORDER, ["experience", "expertise", "authority", "trust"]):

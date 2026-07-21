@@ -467,8 +467,8 @@ def _radar_chart_js(theme: dict, canvas_id: str, labels_json: str, data_json: st
 def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis: GapAnalysisResult, scores: ContentScores, report: AuditReport, theme_key: str = "PG") -> bytes:
     theme = get_theme(theme_key)
 
-    labels = [dim.dimension_name for dim in scores.dimensions]
-    data_points = [dim.score for dim in scores.dimensions]
+    labels = [dim.dimension_name for dim in scores.dimensions.as_list()]
+    data_points = [dim.score for dim in scores.dimensions.as_list()]
     chart_labels_json = json.dumps(labels, ensure_ascii=False)
     chart_data_json = json.dumps(data_points)
 
@@ -715,8 +715,8 @@ def generate_master_html_report(all_results: list, theme_key: str = "PG") -> byt
 
         tf_idf = ", ".join(esc(t) for t in s.missing_tf_idf_terms) if s and getattr(s, "missing_tf_idf_terms", None) else "Brak"
 
-        chart_labels = [d.dimension_name for d in s.dimensions] if s and getattr(s, "dimensions", None) else []
-        chart_data = [d.score for d in s.dimensions] if s and getattr(s, "dimensions", None) else []
+        chart_labels = [d.dimension_name for d in s.dimensions.as_list()] if s and getattr(s, "dimensions", None) else []
+        chart_data = [d.score for d in s.dimensions.as_list()] if s and getattr(s, "dimensions", None) else []
         chart_labels_json = json.dumps(chart_labels, ensure_ascii=False)
         chart_data_json = json.dumps(chart_data)
 
