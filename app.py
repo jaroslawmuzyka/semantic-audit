@@ -713,24 +713,33 @@ with tab3:
 
     FIX_MODE_EEAT = "Tylko Braki E-E-A-T (szybkie)"
     FIX_MODE_FULL = "Pełna ponowna analiza (SERP + Gap + Scoring + Report)"
-    fix_mode = st.radio("Co przeregenerować?", [FIX_MODE_EEAT, FIX_MODE_FULL], key="fix_mode", horizontal=True)
+    FIX_MODE_DELETE = "Usuń wybrane adresy z raportu"
+    fix_mode = st.radio(
+        "Co przeregenerować?", [FIX_MODE_EEAT, FIX_MODE_FULL, FIX_MODE_DELETE], key="fix_mode", horizontal=True,
+    )
     if fix_mode == FIX_MODE_FULL:
         st.caption(
             "Pełna reanaliza pobiera treść na nowo i uruchamia CAŁY audyt (SERP, konkurencja, EAV, scoring, "
             "raport) dla wybranych adresów — przydatne, gdy poprzednia próba skończyła się niepełnym raportem "
             "(np. chwilowy błąd Nodeshub/JINA). Wolniejsze i droższe niż regeneracja samego E-E-A-T."
         )
+    elif fix_mode == FIX_MODE_DELETE:
+        st.caption(
+            "Usuwa zaznaczone adresy z raportu masowego (wszystkie arkusze XLSX + sekcje HTML, oba brandingi) "
+            "i pomija ich pliki indywidualne w wyniku. Nie modyfikuje wgranych przez Ciebie oryginałów — dostajesz "
+            "nowy plik/ZIP bez tych adresów. Bez wywołań AI/JINA."
+        )
 
-    fix_col1, fix_col2, fix_col3 = st.columns(3)
-    with fix_col1:
-        fix_lang = st.selectbox("Język regeneracji", ["Polski", "English", "Deutsch"], index=0, key="fix_lang")
-    with fix_col2:
-        fix_user_context = st.text_input("Dodatkowy kontekst dla AI (opcjonalnie)", key="fix_user_context")
-    with fix_col3:
-        if fix_mode == FIX_MODE_FULL:
-            fix_serp_input = st.selectbox("Ustawienia SERP", list(SERP_LOCALES.keys()), index=0, key="fix_serp")
-        else:
-            fix_serp_input = list(SERP_LOCALES.keys())[0]
+    fix_lang, fix_user_context, fix_serp_input = "Polski", "", list(SERP_LOCALES.keys())[0]
+    if fix_mode != FIX_MODE_DELETE:
+        fix_col1, fix_col2, fix_col3 = st.columns(3)
+        with fix_col1:
+            fix_lang = st.selectbox("Język regeneracji", ["Polski", "English", "Deutsch"], index=0, key="fix_lang")
+        with fix_col2:
+            fix_user_context = st.text_input("Dodatkowy kontekst dla AI (opcjonalnie)", key="fix_user_context")
+        with fix_col3:
+            if fix_mode == FIX_MODE_FULL:
+                fix_serp_input = st.selectbox("Ustawienia SERP", list(SERP_LOCALES.keys()), index=0, key="fix_serp")
 
     fix_uploaded = st.file_uploader(
         "Wgraj ZIP z całą paczką (tak jak pobrany z audytu masowego) i/lub pojedyncze pliki XLSX / HTML",
@@ -858,6 +867,8 @@ with tab3:
                     kw = known_keywords.get(key, "")
                     suffix = f"— fraza: „{kw}”" if kw else "— ⚠️ brak frazy w paczce, trzeba będzie podać ręcznie"
                     label = f"{item['label']}  {suffix}"
+                elif fix_mode == FIX_MODE_DELETE:
+                    label = item["label"]
                 else:
                     label = f"{item['label']}  —  _{source_labels[item['source']]}_"
                 checked = st.checkbox(label, value=False, key=f"fix_sel_{key}")
@@ -877,8 +888,12 @@ with tab3:
                     for k in missing_kw_keys:
                         fix_manual_keywords[k] = st.text_input(f"Fraza dla `{k}`", key=f"fix_kw_{k}")
 
-            btn_label = "Przeregeneruj zaznaczone (E-E-A-T)" if fix_mode == FIX_MODE_EEAT else "Przeregeneruj zaznaczone (pełna analiza)"
-            if st.button(btn_label, type="primary", disabled=not selected_keys, use_container_width=True):
+            btn_labels = {
+                FIX_MODE_EEAT: "Przeregeneruj zaznaczone (E-E-A-T)",
+                FIX_MODE_FULL: "Przeregeneruj zaznaczone (pełna analiza)",
+                FIX_MODE_DELETE: "Usuń zaznaczone adresy z raportu",
+            }
+            if st.button(btn_labels[fix_mode], type="primary", disabled=not selected_keys, use_container_width=True):
                 fix_errors = []
                 total_in, total_out, total_cost = 0, 0, 0.0
                 output_files = {}
@@ -930,7 +945,7 @@ with tab3:
                             fix_errors.append({"url": name, "reason": f"Patchowanie pliku: {e}"})
                             output_files[name] = b
 
-                else:  # FIX_MODE_FULL
+                elif fix_mode == FIX_MODE_FULL:
                     fix_hl, fix_gl = SERP_LOCALES[fix_serp_input]
                     fresh_results = {}
                     with st.spinner("Pełna ponowna analiza w toku (to może potrwać dłużej)..."):
@@ -1007,6 +1022,59 @@ with tab3:
                                 output_files[name] = b
                         except Exception as e:
                             fix_errors.append({"url": name, "reason": f"Przebudowa pliku: {e}"})
+                            output_files[name] = b
+
+                else:  # FIX_MODE_DELETE
+                    urls_to_delete = {k for k in selected_keys if k.startswith("http")}
+
+                    # Pliki indywidualne (xlsx bez wbudowanego URL-a, dopasowane po nazwie/mapowaniu
+                    # ręcznym, oraz html z wbudowanym URL-em) odpowiadające usuwanym adresom — pomijamy
+                    # je całkowicie w wyniku, zamiast je przebudowywać.
+                    files_to_drop = set()
+                    for name in single_xlsx_names:
+                        mapped = url_overrides.get(name, "")
+                        key = mapped if mapped else f"__standalone__{name}"
+                        if key in selected_keys:
+                            files_to_drop.add(name)
+                    for name, rec in file_records.items():
+                        if rec["kind"] == "html_single" and eeat_patch.extract_url_from_single_html(rec["bytes"]) in urls_to_delete:
+                            files_to_drop.add(name)
+
+                    def _theme_of(name, b):
+                        return eeat_patch.guess_theme_from_path(name, b)
+
+                    for name, rec in file_records.items():
+                        if name in files_to_drop:
+                            continue
+                        b, kind = rec["bytes"], rec["kind"]
+                        try:
+                            if kind == "xlsx_master":
+                                reconstructed = eeat_patch.reconstruct_results_from_master_xlsx(b)
+                                remaining = {u: r for u, r in reconstructed.items() if u not in urls_to_delete}
+                                if len(remaining) != len(reconstructed):
+                                    output_files[name] = generate_master_excel_report(list(remaining.values()), theme_key=_theme_of(name, b))
+                                else:
+                                    output_files[name] = b
+                            elif kind == "html_master":
+                                theme = _theme_of(name, b)
+                                sibling = next(
+                                    (n for n, r in file_records.items()
+                                     if r["kind"] == "xlsx_master" and _theme_of(n, r["bytes"]) == theme),
+                                    None,
+                                )
+                                if sibling:
+                                    reconstructed = eeat_patch.reconstruct_results_from_master_xlsx(file_records[sibling]["bytes"])
+                                    remaining = {u: r for u, r in reconstructed.items() if u not in urls_to_delete}
+                                    if len(remaining) != len(reconstructed):
+                                        output_files[name] = generate_master_html_report(list(remaining.values()), theme_key=theme)
+                                    else:
+                                        output_files[name] = b
+                                else:
+                                    output_files[name] = b
+                            else:
+                                output_files[name] = b
+                        except Exception as e:
+                            fix_errors.append({"url": name, "reason": f"Usuwanie adresu: {e}"})
                             output_files[name] = b
 
                 if fix_errors:
