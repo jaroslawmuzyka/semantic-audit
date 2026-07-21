@@ -11,6 +11,7 @@ from utils.excel_generator import generate_excel_report, generate_master_excel_r
 from utils.html_generator import generate_single_html_report, generate_master_html_report
 from utils.themes import THEMES, THEME_KEYS
 from utils import eeat_patch
+from utils.naming import safe_filename
 
 st.set_page_config(page_title="AI Content Auditor", page_icon="📝", layout="wide")
 
@@ -28,10 +29,6 @@ def normalize_cell(value) -> str:
     """Zamienia None/NaN/'nan'/'None' z tabeli na pusty string."""
     s = str(value).strip()
     return "" if s.lower() in ("", "nan", "none") else s
-
-
-def safe_filename(url: str) -> str:
-    return url.split('//')[-1].replace('/', '_').replace('?', '_')
 
 
 def extract_jina_content(data):
@@ -675,15 +672,31 @@ with tab3:
         known_urls = sorted(set(known_urls))
 
         single_xlsx_names = [n for n, r in file_records.items() if r["kind"] == "xlsx_single"]
+
+        # Plik XLSX raportu pojedynczego nie ma zapisanego URL-a w środku, ale nazwa pliku
+        # (audit_{safe_filename(url)}.xlsx) jest tworzona z URL-a w sposób deterministyczny —
+        # więc najpierw próbujemy dopasować automatycznie po nazwie, zamiast pytać o każdy plik.
         url_overrides = {}
+        unmatched_single_xlsx = []
+        for name in single_xlsx_names:
+            guessed = eeat_patch.guess_url_for_individual_file(name, known_urls)
+            if guessed:
+                url_overrides[name] = guessed
+            else:
+                unmatched_single_xlsx.append(name)
+
         if single_xlsx_names:
-            st.markdown("#### Powiąż indywidualne pliki XLSX z adresem URL")
+            matched_count = len(single_xlsx_names) - len(unmatched_single_xlsx)
+            st.caption(f"Dopasowano automatycznie po nazwie pliku: {matched_count}/{len(single_xlsx_names)} plików XLSX.")
+
+        if unmatched_single_xlsx:
+            st.markdown("#### Powiąż pozostałe pliki XLSX z adresem URL")
             st.caption(
-                "Plik XLSX raportu pojedynczego nie ma zapisanego adresu URL. Podaj/wybierz URL, żeby ta sama "
-                "regeneracja trafiła też do pasującego wiersza w raporcie masowym. Możesz zostawić bez powiązania "
-                "— plik zostanie poprawiony samodzielnie."
+                "Tych plików nie udało się automatycznie dopasować po nazwie (np. zostały zmienione/przemianowane, "
+                "albo w wgranej paczce brakuje pliku, z którego można by odczytać ich URL). Podaj/wybierz URL ręcznie "
+                "— albo zostaw bez powiązania, plik zostanie poprawiony samodzielnie."
             )
-            for name in single_xlsx_names:
+            for name in unmatched_single_xlsx:
                 options = ["— (bez powiązania) —"] + known_urls + ["Wpisz inny URL..."]
                 choice = st.selectbox(f"URL dla `{name}`", options, key=f"fix_map_{name}")
                 if choice == "Wpisz inny URL...":

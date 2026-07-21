@@ -14,6 +14,7 @@ from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
 
 from utils.openai_llm import analyze_eeat_only
+from utils.naming import safe_filename
 
 EEAT_ORDER = ["Experience", "Expertise", "Authority", "Trust"]
 
@@ -88,6 +89,22 @@ def extract_url_from_single_html(file_bytes: bytes) -> str:
     text = file_bytes.decode("utf-8", errors="ignore")
     m = re.search(r'<strong>URL:</strong>\s*<a href="([^"]*)"', text)
     return html_lib.unescape(m.group(1)).strip() if m else ""
+
+
+def guess_url_for_individual_file(filename: str, known_urls: list) -> str:
+    """Odgaduje URL dla pliku indywidualnego XLSX (który nie ma wbudowanego URL-a)
+    na podstawie konwencji nazewnictwa 'audit_{safe_filename(url)}.xlsx' używanej
+    przy eksporcie (patrz safe_filename() w utils/naming.py). Zwraca dopasowany
+    URL albo pusty string, jeśli żaden ze znanych adresów nie pasuje do nazwy.
+    """
+    base = filename.rsplit("/", 1)[-1]
+    stem = re.sub(r"\.(xlsx|html?)$", "", base, flags=re.IGNORECASE)
+    if stem.startswith("audit_"):
+        stem = stem[len("audit_"):]
+    for url in known_urls:
+        if safe_filename(url) == stem:
+            return url
+    return ""
 
 
 def extract_source_content_from_single_xlsx(file_bytes: bytes) -> str:
