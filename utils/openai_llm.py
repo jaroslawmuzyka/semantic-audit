@@ -50,11 +50,36 @@ class EEATSignal(BaseModel):
     present_signals: str
     missing_signals: str
 
+class EEATDetail(BaseModel):
+    score: int
+    present_signals: str
+    missing_signals: str
+
+class EEATBreakdown(BaseModel):
+    """Sztywna struktura 4 wymiarów E-E-A-T (Experience/Expertise/Authority/Trust).
+
+    Zamiast dowolnej listy (którą model potrafił łączyć w jeden wpis albo
+    skracać etykiety), każdy wymiar ma tu własne, obowiązkowe pole — model
+    nie ma możliwości zwrócić mniej lub więcej niż 4 rozdzielne oceny.
+    """
+    experience: EEATDetail
+    expertise: EEATDetail
+    authority: EEATDetail
+    trust: EEATDetail
+
+    def as_list(self) -> List[EEATSignal]:
+        return [
+            EEATSignal(dimension="Experience", **self.experience.model_dump()),
+            EEATSignal(dimension="Expertise", **self.expertise.model_dump()),
+            EEATSignal(dimension="Authority", **self.authority.model_dump()),
+            EEATSignal(dimension="Trust", **self.trust.model_dump()),
+        ]
+
 class ContentScores(BaseModel):
     dimensions: List[ScoreDimension]
     problematic_fragments: List[ProblematicFragment]
     srl_patient_instances: List[SRLInstance]
-    eeat_signals: List[EEATSignal]
+    eeat_signals: EEATBreakdown
     missing_tf_idf_terms: List[str]
 
 class Recommendation(BaseModel):
@@ -164,6 +189,37 @@ def generate_audit_report(source_article, gap_analysis: GapAnalysisResult, score
         response_format=AuditReport
     )
     return response.choices[0].message.parsed, response.usage
+
+def analyze_eeat_only(source_article, system_prompt, language, user_context="", model_name="gpt-5-mini") -> tuple:
+    """Lekkie, samodzielne wywołanie oceniające WYŁĄCZNIE E-E-A-T.
+
+    Używane przy przeregenerowywaniu pojedynczej wartości w już istniejącym
+    raporcie — nie wymaga analizy konkurencji ani pełnego scoringu 9 wymiarów.
+    """
+    client = get_openai_client()
+    prompt = f"""
+    Oceń WYŁĄCZNIE sygnały E-E-A-T (Experience, Expertise, Authority, Trust) poniższego artykułu.
+    Dla każdego z 4 wymiarów podaj ocenę (0-10), obecne sygnały i brakujące sygnały.
+    Każdy wymiar oceniaj niezależnie i konkretnie — unikaj powtarzania tej samej treści pod różnymi wymiarami.
+
+    Source Article:
+    {source_article}
+    """
+
+    full_system = system_prompt + f"\n\nIMPORTANT: All outputs and generated content MUST be in {language} language. Respond exclusively in {language}."
+    if user_context:
+        full_system += f"\n\nDODATKOWY KONTEKST UŻYTKOWNIKA (obowiązkowo uwzględnij): {user_context}"
+
+    response = client.chat.completions.parse(
+        model=model_name,
+        messages=[
+            {"role": "system", "content": full_system},
+            {"role": "user", "content": prompt}
+        ],
+        response_format=EEATBreakdown
+    )
+    return response.choices[0].message.parsed, response.usage
+
 
 class KeywordResult(BaseModel):
     keyword: str

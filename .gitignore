@@ -12,3 +12,9 @@ venv/
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Wygenerowane raporty (przykładowe/klienckie pliki wynikowe)
+*.xlsx
+
+# Lokalna konfiguracja uruchamiania podglądu (ścieżki specyficzne dla maszyny)
+.claude/launch.json

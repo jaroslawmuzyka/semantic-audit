@@ -1,4 +1,6 @@
 import os
+import io
+import zipfile
 import streamlit as st
 import pandas as pd
 
@@ -8,6 +10,7 @@ from utils.audit_pipeline import run_audit, SERP_LOCALES, AVAILABLE_MODELS, calc
 from utils.excel_generator import generate_excel_report, generate_master_excel_report, create_zip_archive
 from utils.html_generator import generate_single_html_report, generate_master_html_report
 from utils.themes import THEMES, THEME_KEYS
+from utils import eeat_patch
 
 st.set_page_config(page_title="AI Content Auditor", page_icon="📝", layout="wide")
 
@@ -166,6 +169,11 @@ _DEFAULT_STATE = {
     "mass_files": {},
     "mass_errors": [],
     "last_uploaded_file": None,
+    # Popraw raport (regeneracja E-E-A-T)
+    "fix_output_zip": None,
+    "fix_output_files": None,
+    "fix_errors_result": [],
+    "fix_cost_result": (0, 0, 0.0),
 }
 for key, default in _DEFAULT_STATE.items():
     if key not in st.session_state:
@@ -211,7 +219,7 @@ with st.sidebar:
         )
         prompt_scoring = st.text_area(
             "Krok 5: Ocena wymiarów (Scoring)",
-            value="Oceń artykuł w 9 wymiarach (0-10): CSI Alignment, BLUF, Chunk Quality, URR Placement, Cost of Retrieval, Information Density, SRL Salience, TF-IDF Quality, EEAT (Experience, Expertise, Authority, Trust).\nDla każdego wymiaru zidentyfikuj top problem i podaj surowy cytat (BEFORE).\nWymagane kroki:\n- EEAT detail: Zidentyfikuj obecne i brakujące sygnały.\n- SRL: Zidentyfikuj zdania, gdzie Central Entity (CE) jest Patient (zamiast Agent).\n- TF-IDF: Wypisz brakujące terminy.\nNie generuj sugestii AFTER na tym etapie. Skup się wyłącznie na rygorystycznej ocenie i wyciągnięciu bezpośrednich dowodów z tekstu.",
+            value="Oceń artykuł w 9 wymiarach (0-10): CSI Alignment, BLUF, Chunk Quality, URR Placement, Cost of Retrieval, Information Density, SRL Salience, TF-IDF Quality, EEAT (Experience, Expertise, Authority, Trust).\nDla każdego wymiaru zidentyfikuj top problem i podaj surowy cytat (BEFORE).\nWymagane kroki:\n- EEAT detail: Oceń OSOBNO i NIEZALEŻNIE każdy z 4 wymiarów E-E-A-T (Experience, Expertise, Authority, Trust) — dla każdego z nich podaj własną ocenę, obecne sygnały i brakujące sygnały. Nigdy nie łącz kilku wymiarów w jeden wpis i nie skracaj nazw wymiarów (np. do samego \"EEAT\" albo pojedynczej litery) — każdy wymiar musi zostać opisany osobno, własną, konkretną treścią.\n- SRL: Zidentyfikuj zdania, gdzie Central Entity (CE) jest Patient (zamiast Agent).\n- TF-IDF: Wypisz brakujące terminy.\nNie generuj sugestii AFTER na tym etapie. Skup się wyłącznie na rygorystycznej ocenie i wyciągnięciu bezpośrednich dowodów z tekstu.",
             height=250
         )
         prompt_report = st.text_area(
@@ -231,7 +239,7 @@ with st.sidebar:
 
 prompts = {"gap": prompt_gap_analysis, "scoring": prompt_scoring, "report": prompt_report}
 
-tab1, tab2 = st.tabs(["Pojedynczy Audyt", "Audyt Masowy (Excel)"])
+tab1, tab2, tab3 = st.tabs(["Pojedynczy Audyt", "Audyt Masowy (Excel)", "🔄 Popraw raport (E-E-A-T)"])
 
 # ----------------------------- Pojedynczy Audyt -----------------------------
 
@@ -602,3 +610,203 @@ with tab2:
         if st.button("Zresetuj i rozpocznij od nowa"):
             reset_mass_state(clear_table=True)
             st.rerun()
+
+# ----------------------------- Popraw raport (E-E-A-T) -----------------------------
+
+with tab3:
+    st.subheader("Przeregeneruj wybrane wartości w już gotowych raportach")
+    st.markdown(
+        "Wgraj pliki wynikowe, które już masz (raporty **indywidualne** i/lub **masowe**, "
+        "**XLSX** i/lub **HTML**, dowolny branding PG/WPP). Zaznacz, dla których adresów chcesz "
+        "świeżą ocenę **Braki E-E-A-T**. Reszta każdego pliku (rekomendacje, EAV, formatowanie, "
+        "branding) zostaje bez zmian — modyfikowane są tylko sekcje/komórki E-E-A-T."
+    )
+
+    fix_col1, fix_col2 = st.columns(2)
+    with fix_col1:
+        fix_lang = st.selectbox("Język regeneracji", ["Polski", "English", "Deutsch"], index=0, key="fix_lang")
+    with fix_col2:
+        fix_user_context = st.text_input("Dodatkowy kontekst dla AI (opcjonalnie)", key="fix_user_context")
+
+    fix_uploaded = st.file_uploader(
+        "Wgraj ZIP z całą paczką (tak jak pobrany z audytu masowego) i/lub pojedyncze pliki XLSX / HTML",
+        type=["xlsx", "html", "htm", "zip"], accept_multiple_files=True, key="fix_uploader",
+    )
+    st.caption(
+        "Wgrywając ZIP nie musisz nic rozpakowywać — struktura folderów (PG/WPP, "
+        "„analiza indywidualna”/„analiza zbiorcza”) zostanie zachowana w pliku wynikowym."
+    )
+
+    if fix_uploaded:
+        file_records = {}
+        for f in fix_uploaded:
+            b = f.getvalue()
+            if f.name.lower().endswith(".zip"):
+                try:
+                    with zipfile.ZipFile(io.BytesIO(b)) as zf:
+                        for info in zf.infolist():
+                            if info.is_dir():
+                                continue
+                            entry_name = info.filename.replace("\\", "/")
+                            entry_bytes = zf.read(info.filename)
+                            file_records[entry_name] = {
+                                "bytes": entry_bytes,
+                                "kind": eeat_patch.detect_file_kind(entry_name, entry_bytes),
+                            }
+                except zipfile.BadZipFile:
+                    st.error(f"Nie udało się otworzyć pliku ZIP: {f.name} (uszkodzony lub niepoprawny format).")
+            else:
+                file_records[f.name] = {"bytes": b, "kind": eeat_patch.detect_file_kind(f.name, b)}
+
+        unknown = [n for n, r in file_records.items() if r["kind"] == "unknown"]
+        if unknown:
+            st.warning("Nie rozpoznano typu tych plików (zostaną przepisane bez zmian): " + ", ".join(unknown))
+
+        known_urls = []
+        for name, rec in file_records.items():
+            if rec["kind"] == "xlsx_master":
+                known_urls += eeat_patch.extract_urls_from_master_xlsx(rec["bytes"])
+            elif rec["kind"] == "html_master":
+                known_urls += eeat_patch.extract_urls_from_master_html(rec["bytes"])
+            elif rec["kind"] == "html_single":
+                u = eeat_patch.extract_url_from_single_html(rec["bytes"])
+                if u:
+                    known_urls.append(u)
+        known_urls = sorted(set(known_urls))
+
+        single_xlsx_names = [n for n, r in file_records.items() if r["kind"] == "xlsx_single"]
+        url_overrides = {}
+        if single_xlsx_names:
+            st.markdown("#### Powiąż indywidualne pliki XLSX z adresem URL")
+            st.caption(
+                "Plik XLSX raportu pojedynczego nie ma zapisanego adresu URL. Podaj/wybierz URL, żeby ta sama "
+                "regeneracja trafiła też do pasującego wiersza w raporcie masowym. Możesz zostawić bez powiązania "
+                "— plik zostanie poprawiony samodzielnie."
+            )
+            for name in single_xlsx_names:
+                options = ["— (bez powiązania) —"] + known_urls + ["Wpisz inny URL..."]
+                choice = st.selectbox(f"URL dla `{name}`", options, key=f"fix_map_{name}")
+                if choice == "Wpisz inny URL...":
+                    url_overrides[name] = st.text_input(f"Podaj URL dla `{name}`", key=f"fix_map_custom_{name}").strip()
+                elif choice != "— (bez powiązania) —":
+                    url_overrides[name] = choice
+                else:
+                    url_overrides[name] = ""
+
+        # Zbuduj listę pozycji do przeregenerowania (klucz = URL albo plik samodzielny)
+        work_items = {}
+
+        def add_work_item(key, label):
+            if key not in work_items:
+                work_items[key] = {"label": label, "content": None, "source": None}
+
+        for url in known_urls:
+            add_work_item(url, url)
+        for name in single_xlsx_names:
+            mapped = url_overrides.get(name, "")
+            key = mapped if mapped else f"__standalone__{name}"
+            add_work_item(key, mapped if mapped else f"{name} (plik samodzielny)")
+
+        for name in single_xlsx_names:
+            mapped = url_overrides.get(name, "")
+            key = mapped if mapped else f"__standalone__{name}"
+            content = eeat_patch.extract_source_content_from_single_xlsx(file_records[name]["bytes"])
+            if content:
+                work_items[key]["content"] = content
+                work_items[key]["source"] = "embedded"
+
+        for key, item in work_items.items():
+            if item["content"] is None and key.startswith("http"):
+                item["source"] = "fetch"
+
+        if not work_items:
+            st.info("Nie znaleziono żadnych adresów ani plików możliwych do przeregenerowania.")
+        else:
+            st.markdown("#### Wybierz, co przeregenerować")
+            source_labels = {"embedded": "treść z pliku ✅", "fetch": "pobranie z JINA 🌐", None: "brak treści źródłowej ❌"}
+            selected_keys = []
+            for key, item in sorted(work_items.items(), key=lambda kv: kv[1]["label"]):
+                checked = st.checkbox(
+                    f"{item['label']}  —  _{source_labels[item['source']]}_",
+                    value=(item["source"] is not None), key=f"fix_sel_{key}",
+                )
+                if checked:
+                    selected_keys.append(key)
+
+            if st.button("Przeregeneruj zaznaczone (tylko E-E-A-T)", type="primary", disabled=not selected_keys, use_container_width=True):
+                computed = {}
+                fix_errors = []
+                total_in, total_out, total_cost = 0, 0, 0.0
+                with st.spinner("Przeregenerowywanie E-E-A-T..."):
+                    for key in selected_keys:
+                        item = work_items[key]
+                        content = item["content"]
+                        if content is None and item["source"] == "fetch":
+                            data = fetch_url(key, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
+                            content, _, err = extract_jina_content(data)
+                            if err:
+                                fix_errors.append({"url": key, "reason": f"JINA: {err}"})
+                                continue
+                        if not content:
+                            fix_errors.append({"url": key, "reason": "Brak treści źródłowej — pominięto."})
+                            continue
+                        try:
+                            eeat_list, usage = eeat_patch.regenerate_eeat(
+                                content, fix_lang, fix_user_context, prompts["scoring"], selected_model,
+                            )
+                        except Exception as e:
+                            fix_errors.append({"url": key, "reason": f"OpenAI: {e}"})
+                            continue
+                        computed[key] = eeat_list
+                        total_in += usage.prompt_tokens
+                        total_out += usage.completion_tokens
+                        total_cost += calculate_cost(selected_model, usage.prompt_tokens, usage.completion_tokens)
+
+                output_files = {}
+                for name, rec in file_records.items():
+                    b, kind = rec["bytes"], rec["kind"]
+                    try:
+                        if kind == "xlsx_master":
+                            output_files[name] = eeat_patch.patch_master_xlsx(b, computed)
+                        elif kind == "html_master":
+                            output_files[name] = eeat_patch.patch_master_html(b, computed)
+                        elif kind == "xlsx_single":
+                            mapped = url_overrides.get(name, "")
+                            key = mapped if mapped else f"__standalone__{name}"
+                            output_files[name] = eeat_patch.patch_single_xlsx(b, computed[key]) if key in computed else b
+                        elif kind == "html_single":
+                            u = eeat_patch.extract_url_from_single_html(b)
+                            output_files[name] = eeat_patch.patch_single_html(b, computed[u]) if u in computed else b
+                        else:
+                            output_files[name] = b
+                    except Exception as e:
+                        fix_errors.append({"url": name, "reason": f"Patchowanie pliku: {e}"})
+                        output_files[name] = b
+
+                st.session_state.fix_output_zip = create_zip_archive(output_files)
+                st.session_state.fix_output_files = output_files
+                st.session_state.fix_errors_result = fix_errors
+                st.session_state.fix_cost_result = (total_in, total_out, total_cost)
+                st.session_state.total_tokens["in"] += total_in
+                st.session_state.total_tokens["out"] += total_out
+                st.session_state.total_cost += total_cost
+                st.rerun()
+
+    if st.session_state.fix_output_files:
+        st.divider()
+        st.success(f"Poprawiono {len(st.session_state.fix_output_files)} plik(ów).")
+        t_in, t_out, t_cost = st.session_state.fix_cost_result
+        st.metric("Koszt tej regeneracji", f"${t_cost:.4f}", f"{t_in} in / {t_out} out")
+        st.download_button(
+            "Pobierz poprawione pliki (ZIP)", data=st.session_state.fix_output_zip,
+            file_name="raporty_poprawione_eeat.zip", mime="application/zip",
+            use_container_width=True,
+        )
+        with st.expander("Pobierz pojedynczo"):
+            for name, b in st.session_state.fix_output_files.items():
+                base_name = name.rsplit("/", 1)[-1]
+                st.download_button(f"Pobierz {name}", data=b, file_name=base_name, key=f"fix_dl_{name}")
+        if st.session_state.fix_errors_result:
+            with st.expander(f"Pominięte / błędy ({len(st.session_state.fix_errors_result)})"):
+                for e in st.session_state.fix_errors_result:
+                    st.markdown(f"- `{e['url']}` — {e['reason']}")
