@@ -446,7 +446,12 @@ def reconstruct_results_from_master_xlsx(file_bytes: bytes) -> dict:
     if "URL" not in idx_full:
         return {}
 
-    dimension_names = sorted({h[:-len(" Problem")] for h in headers_full if h and h.endswith(" Problem")})
+    # Kolejność zachowana taka, w jakiej kolumny występują w arkuszu (czyli taka, w jakiej
+    # model oryginalnie zwrócił wymiary) — inaczej "Profil wymiarów" (wykres radarowy)
+    # rozjeżdża się względem oryginalnego raportu po przebudowie mastera.
+    dimension_names = list(dict.fromkeys(
+        h[:-len(" Problem")] for h in headers_full if h and h.endswith(" Problem")
+    ))
     rec_indices = sorted({
         int(m.group(1)) for h in headers_full if h
         for m in [re.match(r"^Rec (\d+) Priority$", h)] if m
