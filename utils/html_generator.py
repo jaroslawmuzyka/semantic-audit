@@ -529,7 +529,7 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
         structure_html = "<p style='color: var(--muted);'>Brak specyficznych rekomendacji dla nagłówków.</p>"
 
     eeat_miss = []
-    for e in scores.eeat_signals:
+    for e in scores.eeat_signals.as_list():
         if e.missing_signals and e.missing_signals.strip() != "":
             eeat_miss.append(f"[{esc(e.dimension)}]: {esc(e.missing_signals)}")
 
@@ -631,9 +631,11 @@ def generate_single_html_report(url: str, title: str, keyword: str, gap_analysis
             <div class="two-col-grid">
                 <div>
                     <h4>Braki E-E-A-T</h4>
+                    <!--EEAT_BLOCK:START-->
                     <ul>
                         {eeat_list_html}
                     </ul>
+                    <!--EEAT_BLOCK:END-->
                 </div>
                 <div>
                     <h4>Brakujące powiązane frazy (TF-IDF)</h4>
@@ -707,7 +709,7 @@ def generate_master_html_report(all_results: list, theme_key: str = "PG") -> byt
 
         eeat_miss = []
         if s and hasattr(s, "eeat_signals"):
-            for e in s.eeat_signals:
+            for e in s.eeat_signals.as_list():
                 if e.missing_signals and e.missing_signals.strip() != "":
                     eeat_miss.append(f"<li>[{esc(e.dimension)}]: {esc(e.missing_signals)}</li>")
 
@@ -820,9 +822,11 @@ def generate_master_html_report(all_results: list, theme_key: str = "PG") -> byt
                     </div>
                     <div class="data-card">
                         <h4>Braki E-E-A-T:</h4>
+                        <!--EEAT_BLOCK:START:{esc(url)}-->
                         <ul class="data-list">
                             {''.join(eeat_miss) if eeat_miss else '<li>Brak</li>'}
                         </ul>
+                        <!--EEAT_BLOCK:END:{esc(url)}-->
                     </div>
                     <div class="data-card">
                         <h4>Brakujące Słowa (TF-IDF):</h4>

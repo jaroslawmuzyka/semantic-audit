@@ -155,7 +155,7 @@ def generate_excel_report(gap_analysis: GapAnalysisResult, scores: ContentScores
 
         # Sheet 5: EEAT Signals
         eeat_data = []
-        for e in scores.eeat_signals:
+        for e in scores.eeat_signals.as_list():
             eeat_data.append({
                 "Dimension": e.dimension,
                 "Score": e.score,
@@ -252,7 +252,7 @@ def generate_master_excel_report(all_results: list, theme_key: str = "PG") -> by
             row_full[f"{dim.dimension_name} Problem"] = dim.top_problem
 
         # EEAT
-        for eeat in s.eeat_signals:
+        for eeat in s.eeat_signals.as_list():
             row_full[f"EEAT {eeat.dimension} Score"] = eeat.score
             row_full[f"EEAT {eeat.dimension} Missing"] = eeat.missing_signals
 
@@ -277,7 +277,7 @@ def generate_master_excel_report(all_results: list, theme_key: str = "PG") -> by
                 structure.append(f"{entry.heading}\nPrzykładowy (nowy) BLUF: {entry.bluf}")
 
         eeat_miss = []
-        for e in s.eeat_signals:
+        for e in s.eeat_signals.as_list():
             if e.missing_signals and e.missing_signals.strip() != "":
                 eeat_miss.append(f"[{e.dimension}]: {e.missing_signals}")
 
