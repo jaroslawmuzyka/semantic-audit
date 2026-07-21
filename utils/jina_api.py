@@ -98,45 +98,62 @@ def truncate_content(content, max_words=1500):
         return content
     return ' '.join(words[:max_words]) + f'\n\n[... treść skrócona do {max_words} słów ...]'
 
-def fetch_url(url, max_retries=3, remove_selector=None, target_selector=None):
-    """Pobiera treść strony przez JINA Reader.
+# Kolejność trybów silnika renderującego JINA do wypróbowania, gdy poprzedni
+# zwróci odpowiedź inną niż 200. "None" oznacza brak nagłówka X-Engine (tryb domyślny).
+JINA_ENGINE_MODES = ["cf-browser-rendering", "browser", None]
 
-    Zwraca dict z odpowiedzią JINA, a przy niepowodzeniu dict {"error": "..."} z powodem.
-    """
+
+def _build_headers(engine, remove_selector, target_selector):
     headers = {
         "Accept": "application/json",
         "X-Return-Format": "markdown",
-        "X-Engine": "cf-browser-rendering",
         "X-Retain-Images": "none",
-        "X-Timeout": "10"
+        "X-Timeout": "10",
     }
+    if engine:
+        headers["X-Engine"] = engine
     if remove_selector:
         headers["X-Remove-Selector"] = remove_selector
     if target_selector:
         headers["X-Target-Selector"] = target_selector
-
     api_key = get_api_key()
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+    return headers
 
+
+def fetch_url(url, max_retries=3, remove_selector=None, target_selector=None):
+    """Pobiera treść strony przez JINA Reader.
+
+    Przy odpowiedzi innej niż 200 próbuje kolejno wszystkich trybów silnika
+    z JINA_ENGINE_MODES (część stron blokuje jeden tryb renderowania, a inny
+    już nie), zanim zgłosi ostateczny błąd.
+
+    Zwraca dict z odpowiedzią JINA, a przy niepowodzeniu dict {"error": "..."} z powodem.
+    """
     request_url = f"{API_BASE}{url}"
     last_error = "Nieznany błąd"
 
-    for attempt in range(max_retries):
-        try:
-            resp = requests.get(request_url, headers=headers, timeout=60)
-            if resp.status_code == 200:
-                return resp.json()
-            elif resp.status_code == 429:
-                last_error = "HTTP 429 (rate limit)"
-                wait = 2 ** (attempt + 1)
-                time.sleep(wait)
-            else:
-                return {"error": f"JINA HTTP {resp.status_code}: {resp.text[:200]}"}
-        except requests.exceptions.RequestException as e:
-            last_error = str(e)
-            if attempt < max_retries - 1:
-                time.sleep(2)
+    for engine in JINA_ENGINE_MODES:
+        headers = _build_headers(engine, remove_selector, target_selector)
+
+        for attempt in range(max_retries):
+            try:
+                resp = requests.get(request_url, headers=headers, timeout=60)
+                if resp.status_code == 200:
+                    return resp.json()
+                elif resp.status_code == 429:
+                    last_error = "HTTP 429 (rate limit)"
+                    wait = 2 ** (attempt + 1)
+                    time.sleep(wait)
+                else:
+                    last_error = f"JINA HTTP {resp.status_code} (tryb: {engine or 'default'}): {resp.text[:200]}"
+                    break  # ten tryb silnika nie zadziałał — przejdź do kolejnego
+            except requests.exceptions.RequestException as e:
+                last_error = str(e)
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+
     return {"error": last_error}
 
 def process_single_url(url, clean=True, remove_selector=None, target_selector=None):

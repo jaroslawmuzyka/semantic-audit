@@ -19,24 +19,21 @@ def _search_impl(keyword, hl="pl", gl="pl", max_retries=3):
     headers = {"Authorization": f"Bearer {api_key}"}
     params = {"keyword": keyword, "hl": hl, "gl": gl}
 
+    last_error = "Nieznany błąd"
     for attempt in range(max_retries):
         try:
             resp = requests.get(API_BASE, headers=headers, params=params, timeout=30)
             if resp.status_code == 200:
                 data = resp.json()
                 return extract_relevant_data(data)
-            elif resp.status_code == 429:
-                wait = 2 ** (attempt + 1)
-                time.sleep(wait)
-            else:
-                return {"error": f"API returned {resp.status_code}: {resp.text}"}
+            last_error = f"API returned {resp.status_code}: {resp.text}"
         except requests.exceptions.RequestException as e:
-            if attempt < max_retries - 1:
-                time.sleep(2)
-            else:
-                return {"error": str(e)}
+            last_error = str(e)
 
-    return {"error": "Max retries exceeded"}
+        if attempt < max_retries - 1:
+            time.sleep(3)
+
+    return {"error": last_error}
 
 
 @st.cache_data(ttl=3600, show_spinner=False)

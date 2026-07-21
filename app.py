@@ -99,6 +99,15 @@ def rebuild_mass_archives():
         skipped_txt = "\n".join(f"{e['url']} — {e['reason']}" for e in st.session_state.mass_errors)
         zip_files["pominiete_adresy.txt"] = skipped_txt.encode("utf-8")
 
+    if st.session_state.mass_warnings:
+        warn_lines = [f"{w['url']} — {w['reason']}" for w in st.session_state.mass_warnings]
+        warn_txt = (
+            "Te adresy MAJĄ wygenerowany raport, ale jest niepełny — któryś z etapów "
+            "(SERP/Nodeshub albo pobieranie treści konkurentów przez JINA) nie powiódł się mimo "
+            "ponownych prób, więc analiza konkurencji (Matrix EAV) może być pusta lub okrojona.\n\n"
+        ) + "\n".join(warn_lines)
+        zip_files["bledy_eksportu.txt"] = warn_txt.encode("utf-8")
+
     st.session_state.mass_master = masters_xlsx
     st.session_state.mass_master_html = masters_html
     st.session_state.mass_zip = create_zip_archive(zip_files)
@@ -111,6 +120,7 @@ def process_mass_row(url, keyword, title, source_content, model, prompts, langua
     )
     for w in result["warnings"]:
         st.warning(f"{url}: {w}")
+        st.session_state.mass_warnings.append({"url": url, "reason": w})
 
     safe_url = safe_filename(url)
     for tk in THEME_KEYS:
@@ -165,6 +175,7 @@ _DEFAULT_STATE = {
     "mass_master_html": None,     # dict {theme_key: bytes}
     "mass_files": {},
     "mass_errors": [],
+    "mass_warnings": [],
     "last_uploaded_file": None,
     # Popraw raport (regeneracja E-E-A-T)
     "fix_output_zip": None,
@@ -188,6 +199,7 @@ def reset_mass_state(clear_table=False):
     st.session_state.mass_jina_content = None
     st.session_state.mass_jina_title = None
     st.session_state.mass_errors = []
+    st.session_state.mass_warnings = []
     if clear_table:
         st.session_state.mass_df = None
 
@@ -527,6 +539,11 @@ with tab2:
             for e in st.session_state.mass_errors:
                 st.markdown(f"- `{e['url']}` — {e['reason']}")
 
+    if st.session_state.mass_warnings:
+        with st.expander(f"⚠️ Raporty niepełne ({len(st.session_state.mass_warnings)}) — patrz też bledy_eksportu.txt w ZIP-ie"):
+            for w in st.session_state.mass_warnings:
+                st.markdown(f"- `{w['url']}` — {w['reason']}")
+
     if st.session_state.mass_step == 1:
         # Maszyna stanów: jeden wiersz na jeden przebieg skryptu (odporne na rerun,
         # brak duplikatów przy przerwaniu, działa dla trybu manualnego i automatycznego).
@@ -795,6 +812,10 @@ with tab3:
                     except Exception as e:
                         fix_errors.append({"url": name, "reason": f"Patchowanie pliku: {e}"})
                         output_files[name] = b
+
+                if fix_errors:
+                    err_txt = "\n".join(f"{e['url']} — {e['reason']}" for e in fix_errors)
+                    output_files["bledy_eksportu.txt"] = err_txt.encode("utf-8")
 
                 st.session_state.fix_output_zip = create_zip_archive(output_files)
                 st.session_state.fix_output_files = output_files
