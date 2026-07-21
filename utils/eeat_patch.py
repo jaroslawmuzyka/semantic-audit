@@ -9,12 +9,17 @@ import io
 import re
 import html as html_lib
 
+import streamlit as st
 import openpyxl
 from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
 
-from utils.openai_llm import analyze_eeat_only
+from utils.openai_llm import (
+    analyze_eeat_only, EAVEntry, GapAnalysisResult, ScoreDimension, ContentScores,
+    EEATDetail, EEATBreakdown, Recommendation, TargetHeading, AuditReport,
+)
 from utils.naming import safe_filename
+from utils.themes import THEMES, THEME_KEYS
 
 EEAT_ORDER = ["Experience", "Expertise", "Authority", "Trust"]
 
@@ -89,6 +94,27 @@ def extract_url_from_single_html(file_bytes: bytes) -> str:
     text = file_bytes.decode("utf-8", errors="ignore")
     m = re.search(r'<strong>URL:</strong>\s*<a href="([^"]*)"', text)
     return html_lib.unescape(m.group(1)).strip() if m else ""
+
+
+def extract_keywords_from_master_xlsx(file_bytes: bytes) -> dict:
+    """Lekki odczyt pary URL -> Fraza z master XLSX (bez budowania pełnych
+    obiektów jak reconstruct_results_from_master_xlsx) — używany do podpowiedzi
+    frazy przy pełnej ponownej analizie."""
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
+    for sheet_name in ("Pełny Raport", "Rekomendacje (Actionable)"):
+        if sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_name]
+        rows = ws.iter_rows(values_only=True)
+        headers = list(next(rows, []))
+        if "URL" not in headers or "Fraza" not in headers:
+            continue
+        url_idx, kw_idx = headers.index("URL"), headers.index("Fraza")
+        return {
+            str(r[url_idx]).strip(): str(r[kw_idx] or "").strip()
+            for r in rows if r and r[url_idx]
+        }
+    return {}
 
 
 def guess_url_for_individual_file(filename: str, known_urls: list) -> str:
@@ -306,3 +332,215 @@ def patch_master_html(file_bytes: bytes, url_to_eeat: dict) -> bytes:
 
     new_text = block_re.sub(patch_block, text)
     return new_text.encode("utf-8")
+
+
+# --------------------------------------------------------------------------
+# Pełna ponowna analiza URL-a — rekonstrukcja pozostałych wierszy z master XLSX
+# --------------------------------------------------------------------------
+#
+# W przeciwieństwie do patchowania E-E-A-T powyżej, pełna reanaliza zastępuje
+# CAŁY wiersz danego URL-a świeżym wynikiem audytu. Zamiast ręcznie łatać
+# komórki w wielowierszowej, dynamicznej strukturze kolumn, odtwarzamy z
+# master XLSX-a pełne obiekty (GapAnalysisResult/ContentScores/AuditReport)
+# dla WSZYSTKICH pozostałych, nietkniętych URL-i, podmieniamy wpis dla
+# przeregenerowanego adresu na świeży wynik i budujemy plik na nowo tymi
+# samymi funkcjami co żywy audyt (generate_master_excel_report/html).
+#
+# Pola nigdzie nie renderowane w eksporcie master (problematic_fragments,
+# srl_patient_instances, before_quote dla wymiarów ogólnych, top_3_gaps_p1/
+# root_attributes/unique_opportunities) i tak nie trafiają do żadnego arkusza
+# ani sekcji HTML master — ich odtworzenie jako puste jest w pełni bezstratne.
+
+def guess_theme_from_path(path: str, file_bytes: bytes = None) -> str:
+    """Zgaduje branding (PG/WPP) pliku — najpierw po folderze w ścieżce (tak
+    zapisuje je ta aplikacja), a w razie potrzeby po kolorze wypełnienia
+    nagłówka arkusza (excel_header_fill z utils/themes.py)."""
+    parts = path.replace("\\", "/").split("/")
+    for tk in THEME_KEYS:
+        if tk in parts:
+            return tk
+
+    if file_bytes:
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
+            header_cell = wb[wb.sheetnames[0]].cell(row=1, column=1)
+            fill_rgb = (header_cell.fill.start_color.rgb or "").upper()
+            for tk in THEME_KEYS:
+                if THEMES[tk]["excel_header_fill"].upper() in fill_rgb:
+                    return tk
+        except Exception:
+            pass
+
+    return THEME_KEYS[0]
+
+
+def _parse_target_structure(text) -> list:
+    text = str(text or "").strip()
+    if not text or text == "Brak":
+        return []
+    marker = "\nPrzykładowy (nowy) BLUF: "
+    entries = []
+    for chunk in text.split("\n\n"):
+        if marker in chunk:
+            heading, bluf = chunk.split(marker, 1)
+        else:
+            heading, bluf = chunk, ""
+        entries.append(TargetHeading(heading=heading.strip(), bluf=bluf.strip()))
+    return entries
+
+
+@st.cache_data(show_spinner=False)
+def reconstruct_results_from_master_xlsx(file_bytes: bytes) -> dict:
+    """Odtwarza pełne dane (kształt jak wpisy mass_results) dla KAŻDEGO URL-a
+    w danym master XLSX, na podstawie arkuszy 'Pełny Raport', 'Rekomendacje
+    (Actionable)' i 'Zbiorczy Matrix EAV'. Zwraca dict {url: result_dict}.
+
+    Cache'owane po treści pliku — to dość ciężki parsing, a strona Streamlit
+    przelicza się od nowa przy każdej interakcji użytkownika.
+    """
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
+    if "Pełny Raport" not in wb.sheetnames:
+        return {}
+
+    eav_by_url = {}
+    if "Zbiorczy Matrix EAV" in wb.sheetnames:
+        ws_eav = wb["Zbiorczy Matrix EAV"]
+        rows_eav = ws_eav.iter_rows(values_only=True)
+        headers_eav = list(next(rows_eav, []))
+        idx_eav = {h: i for i, h in enumerate(headers_eav) if h is not None}
+        if "URL" in idx_eav:
+            for r in rows_eav:
+                if not r:
+                    continue
+                u = str(r[idx_eav["URL"]] or "").strip()
+                if not u:
+                    continue
+                presence = [
+                    (idx_eav.get(f"K{i}") is not None and str(r[idx_eav[f"K{i}"]] or "").strip() == "+")
+                    for i in range(1, 11)
+                ]
+                eav_by_url.setdefault(u, []).append(EAVEntry(
+                    attribute=str(r[idx_eav.get("Attribute", -1)] or ""),
+                    urr_type=str(r[idx_eav.get("URR Type", -1)] or ""),
+                    coverage=str(r[idx_eav.get("Coverage", -1)] or ""),
+                    competitors_presence=presence,
+                    priority=str(r[idx_eav.get("Priority", -1)] or ""),
+                    status=str(r[idx_eav.get("Status", -1)] or ""),
+                ))
+
+    structure_by_url = {}
+    if "Rekomendacje (Actionable)" in wb.sheetnames:
+        ws_action = wb["Rekomendacje (Actionable)"]
+        rows_action = ws_action.iter_rows(values_only=True)
+        headers_action = list(next(rows_action, []))
+        idx_action = {h: i for i, h in enumerate(headers_action) if h is not None}
+        if "URL" in idx_action and "Docelowa Struktura Nagłówków" in idx_action:
+            for r in rows_action:
+                if r:
+                    structure_by_url[str(r[idx_action["URL"]] or "").strip()] = r[idx_action["Docelowa Struktura Nagłówków"]]
+
+    ws_full = wb["Pełny Raport"]
+    rows_full = ws_full.iter_rows(values_only=True)
+    headers_full = list(next(rows_full, []))
+    idx_full = {h: i for i, h in enumerate(headers_full) if h is not None}
+    if "URL" not in idx_full:
+        return {}
+
+    dimension_names = sorted({h[:-len(" Problem")] for h in headers_full if h and h.endswith(" Problem")})
+    rec_indices = sorted({
+        int(m.group(1)) for h in headers_full if h
+        for m in [re.match(r"^Rec (\d+) Priority$", h)] if m
+    })
+
+    results = {}
+    for r in rows_full:
+        if not r:
+            continue
+        url = str(r[idx_full["URL"]] or "").strip()
+        if not url:
+            continue
+
+        def gv(name, default=None):
+            i = idx_full.get(name)
+            return r[i] if i is not None else default
+
+        dimensions = [
+            ScoreDimension(
+                dimension_name=dim,
+                score=int(gv(f"{dim} Score") or 0),
+                top_problem=str(gv(f"{dim} Problem") or ""),
+                before_quote="",
+            )
+            for dim in dimension_names
+        ]
+
+        eeat_kwargs = {}
+        for dim, field in zip(EEAT_ORDER, ["experience", "expertise", "authority", "trust"]):
+            eeat_kwargs[field] = EEATDetail(
+                score=int(gv(f"EEAT {dim} Score") or 0),
+                present_signals="",
+                missing_signals=str(gv(f"EEAT {dim} Missing") or ""),
+            )
+
+        missing_tfidf = [t.strip() for t in str(gv("Missing TF-IDF") or "").split(",") if t.strip()]
+
+        scores = ContentScores(
+            dimensions=dimensions,
+            problematic_fragments=[],
+            srl_patient_instances=[],
+            eeat_signals=EEATBreakdown(**eeat_kwargs),
+            missing_tf_idf_terms=missing_tfidf,
+        )
+
+        recommendations = []
+        for i in rec_indices:
+            priority = gv(f"Rec {i} Priority")
+            if not priority:
+                continue
+            impact_raw = str(gv(f"Rec {i} Impact") or "0").replace("+", "").strip()
+            try:
+                impact = int(impact_raw)
+            except ValueError:
+                impact = 0
+            recommendations.append(Recommendation(
+                priority=str(priority), title=str(gv(f"Rec {i} Title") or ""), context="",
+                before_quote=str(gv(f"Rec {i} BEFORE") or ""), after_generated=str(gv(f"Rec {i} AFTER") or ""),
+                impact_cqs=impact,
+            ))
+
+        report = AuditReport(
+            cqs_score=int(gv("CQS Score") or 0),
+            ai_citability_score=int(gv("AI Citability") or 0),
+            executive_summary=str(gv("Executive Summary") or ""),
+            recommendations=recommendations,
+            target_structure=_parse_target_structure(structure_by_url.get(url, "")),
+            eeat_ready_blocks="",
+        )
+
+        gap_analysis = GapAnalysisResult(
+            eav_matrix=eav_by_url.get(url, []),
+            top_3_gaps_p1=[], root_attributes=[], unique_opportunities=[],
+        )
+
+        results[url] = {
+            "url": url, "keyword": str(gv("Fraza") or ""),
+            "report": report, "scores": scores, "gap_analysis": gap_analysis,
+            "tokens_in": 0, "tokens_out": 0, "cost": 0.0,
+        }
+
+    return results
+
+
+def merge_fresh_results_into_master(reconstructed: dict, fresh_results: dict) -> list:
+    """Łączy zrekonstruowane dane nietkniętych wierszy z nowymi, w pełni
+    świeżymi wynikami (kształt jak zwraca utils.audit_pipeline.fetch_and_audit)
+    dla przeregenerowanych URL-i. Zwraca listę gotową dla
+    generate_master_excel_report / generate_master_html_report."""
+    merged = dict(reconstructed)
+    for url, fresh in fresh_results.items():
+        merged[url] = {
+            "url": url, "keyword": fresh["keyword"], "report": fresh["report"],
+            "scores": fresh["scores"], "gap_analysis": fresh["gap_analysis"],
+            "tokens_in": fresh["tokens_in"], "tokens_out": fresh["tokens_out"], "cost": fresh["cost"],
+        }
+    return list(merged.values())

@@ -6,7 +6,7 @@ import pandas as pd
 
 from utils.jina_api import fetch_url
 from utils.openai_llm import generate_keyword_from_url
-from utils.audit_pipeline import run_audit, SERP_LOCALES, AVAILABLE_MODELS, calculate_cost
+from utils.audit_pipeline import run_audit, fetch_and_audit, SERP_LOCALES, AVAILABLE_MODELS, calculate_cost
 from utils.excel_generator import generate_excel_report, generate_master_excel_report, create_zip_archive
 from utils.html_generator import generate_single_html_report, generate_master_html_report
 from utils.themes import THEMES, THEME_KEYS
@@ -176,6 +176,8 @@ _DEFAULT_STATE = {
     "mass_files": {},
     "mass_errors": [],
     "mass_warnings": [],
+    "mass_retry_queue": [],
+    "mass_retry_idx": 0,
     "last_uploaded_file": None,
     # Popraw raport (regeneracja E-E-A-T)
     "fix_output_zip": None,
@@ -200,6 +202,8 @@ def reset_mass_state(clear_table=False):
     st.session_state.mass_jina_title = None
     st.session_state.mass_errors = []
     st.session_state.mass_warnings = []
+    st.session_state.mass_retry_queue = []
+    st.session_state.mass_retry_idx = 0
     if clear_table:
         st.session_state.mass_df = None
 
@@ -552,7 +556,13 @@ with tab2:
         idx = st.session_state.mass_idx
 
         if idx >= n_rows:
-            st.session_state.mass_step = 2
+            if st.session_state.mass_warnings:
+                # Kolejka do ponownej, pełnej próby — unikalne URL-e, w kolejności wystąpienia.
+                st.session_state.mass_retry_queue = list(dict.fromkeys(w["url"] for w in st.session_state.mass_warnings))
+                st.session_state.mass_retry_idx = 0
+                st.session_state.mass_step = 3
+            else:
+                st.session_state.mass_step = 2
             st.rerun()
 
         st.progress(min(idx / n_rows, 1.0) if n_rows else 0.0, text=f"Postęp audytu: {idx}/{n_rows}")
@@ -614,6 +624,71 @@ with tab2:
         st.session_state.mass_idx += 1
         st.rerun()
 
+    if st.session_state.mass_step == 3:
+        # Druga runda: adresy, które za pierwszym razem dostały niepełny raport
+        # (np. chwilowy błąd Nodeshub/JINA), dostają jedną pełną, ponowną próbę.
+        queue = st.session_state.mass_retry_queue
+        n_retry = len(queue)
+        ridx = st.session_state.mass_retry_idx
+
+        if ridx >= n_retry:
+            st.session_state.mass_step = 2
+            st.rerun()
+
+        st.progress(min(ridx / n_retry, 1.0) if n_retry else 0.0, text=f"Ponowna próba dla niepełnych raportów: {ridx}/{n_retry}")
+
+        url = queue[ridx]
+        keyword = next((r["keyword"] for r in st.session_state.mass_results if r["url"] == url), "")
+        st.write(f"### Ponowna, pełna analiza {ridx+1}/{n_retry}: {url}")
+
+        with st.spinner(f"Pobieranie treści i pełna reanaliza ({url})..."):
+            try:
+                result = fetch_and_audit(
+                    url, keyword, selected_model, prompts, mass_lang_input, mass_user_context,
+                    hl=mass_hl, gl=mass_gl, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors,
+                )
+            except Exception as e:
+                st.warning(f"Ponowna próba nadal nieudana dla {url}: {e}")
+                st.session_state.mass_warnings = [w for w in st.session_state.mass_warnings if w["url"] != url]
+                st.session_state.mass_warnings.append({"url": url, "reason": f"(po ponownej próbie) {e}"})
+                st.session_state.mass_retry_idx += 1
+                st.rerun()
+
+        for i, r in enumerate(st.session_state.mass_results):
+            if r["url"] == url:
+                st.session_state.mass_results[i] = {
+                    "url": url, "keyword": keyword, "report": result["report"], "scores": result["scores"],
+                    "gap_analysis": result["gap_analysis"], "tokens_in": result["tokens_in"],
+                    "tokens_out": result["tokens_out"], "cost": result["cost"],
+                }
+                break
+
+        safe_url = safe_filename(url)
+        for tk in THEME_KEYS:
+            st.session_state.mass_files[f"{tk}/analiza indywidualna/audit_{safe_url}.xlsx"] = generate_excel_report(
+                result["gap_analysis"], result["scores"], result["report"],
+                result["source_content"], result["consolidated_competitors"], theme_key=tk,
+            )
+            st.session_state.mass_files[f"{tk}/analiza indywidualna/audit_{safe_url}.html"] = generate_single_html_report(
+                url, result["title"], keyword, result["gap_analysis"], result["scores"], result["report"], theme_key=tk,
+            )
+
+        st.session_state.total_tokens["in"] += result["tokens_in"]
+        st.session_state.total_tokens["out"] += result["tokens_out"]
+        st.session_state.total_cost += result["cost"]
+
+        st.session_state.mass_warnings = [w for w in st.session_state.mass_warnings if w["url"] != url]
+        if result["warnings"]:
+            for w in result["warnings"]:
+                st.session_state.mass_warnings.append({"url": url, "reason": f"(po ponownej próbie) {w}"})
+            st.warning(f"Ponowna próba nadal niepełna dla {url}: {'; '.join(result['warnings'])}")
+        else:
+            st.success(f"Ponowna próba udana: {url} — raport teraz pełny.")
+
+        rebuild_mass_archives()
+        st.session_state.mass_retry_idx += 1
+        st.rerun()
+
     if st.session_state.mass_step == 2:
         st.success("Zakończono audyt masowy wszystkich adresów!")
         st.metric(
@@ -636,11 +711,26 @@ with tab3:
         "branding) zostaje bez zmian — modyfikowane są tylko sekcje/komórki E-E-A-T."
     )
 
-    fix_col1, fix_col2 = st.columns(2)
+    FIX_MODE_EEAT = "Tylko Braki E-E-A-T (szybkie)"
+    FIX_MODE_FULL = "Pełna ponowna analiza (SERP + Gap + Scoring + Report)"
+    fix_mode = st.radio("Co przeregenerować?", [FIX_MODE_EEAT, FIX_MODE_FULL], key="fix_mode", horizontal=True)
+    if fix_mode == FIX_MODE_FULL:
+        st.caption(
+            "Pełna reanaliza pobiera treść na nowo i uruchamia CAŁY audyt (SERP, konkurencja, EAV, scoring, "
+            "raport) dla wybranych adresów — przydatne, gdy poprzednia próba skończyła się niepełnym raportem "
+            "(np. chwilowy błąd Nodeshub/JINA). Wolniejsze i droższe niż regeneracja samego E-E-A-T."
+        )
+
+    fix_col1, fix_col2, fix_col3 = st.columns(3)
     with fix_col1:
         fix_lang = st.selectbox("Język regeneracji", ["Polski", "English", "Deutsch"], index=0, key="fix_lang")
     with fix_col2:
         fix_user_context = st.text_input("Dodatkowy kontekst dla AI (opcjonalnie)", key="fix_user_context")
+    with fix_col3:
+        if fix_mode == FIX_MODE_FULL:
+            fix_serp_input = st.selectbox("Ustawienia SERP", list(SERP_LOCALES.keys()), index=0, key="fix_serp")
+        else:
+            fix_serp_input = list(SERP_LOCALES.keys())[0]
 
     fix_uploaded = st.file_uploader(
         "Wgraj ZIP z całą paczką (tak jak pobrany z audytu masowego) i/lub pojedyncze pliki XLSX / HTML",
@@ -677,9 +767,13 @@ with tab3:
             st.warning("Nie rozpoznano typu tych plików (zostaną przepisane bez zmian): " + ", ".join(unknown))
 
         known_urls = []
+        known_keywords = {}
         for name, rec in file_records.items():
             if rec["kind"] == "xlsx_master":
                 known_urls += eeat_patch.extract_urls_from_master_xlsx(rec["bytes"])
+                known_keywords.update({
+                    u: kw for u, kw in eeat_patch.extract_keywords_from_master_xlsx(rec["bytes"]).items() if kw
+                })
             elif rec["kind"] == "html_master":
                 known_urls += eeat_patch.extract_urls_from_master_html(rec["bytes"])
             elif rec["kind"] == "html_single":
@@ -755,63 +849,165 @@ with tab3:
             st.markdown("#### Wybierz, co przeregenerować")
             source_labels = {"embedded": "treść z pliku ✅", "fetch": "pobranie z JINA 🌐", None: "brak treści źródłowej ❌"}
             selected_keys = []
+            skipped_no_url = []
             for key, item in sorted(work_items.items(), key=lambda kv: kv[1]["label"]):
-                checked = st.checkbox(
-                    f"{item['label']}  —  _{source_labels[item['source']]}_",
-                    value=False, key=f"fix_sel_{key}",
-                )
+                if fix_mode == FIX_MODE_FULL and not key.startswith("http"):
+                    skipped_no_url.append(item["label"])
+                    continue
+                if fix_mode == FIX_MODE_FULL:
+                    kw = known_keywords.get(key, "")
+                    suffix = f"— fraza: „{kw}”" if kw else "— ⚠️ brak frazy w paczce, trzeba będzie podać ręcznie"
+                    label = f"{item['label']}  {suffix}"
+                else:
+                    label = f"{item['label']}  —  _{source_labels[item['source']]}_"
+                checked = st.checkbox(label, value=False, key=f"fix_sel_{key}")
                 if checked:
                     selected_keys.append(key)
 
-            if st.button("Przeregeneruj zaznaczone (tylko E-E-A-T)", type="primary", disabled=not selected_keys, use_container_width=True):
-                computed = {}
+            if fix_mode == FIX_MODE_FULL and skipped_no_url:
+                st.caption(
+                    "Pominięto (brak przypisanego URL-a, pełna reanaliza go wymaga): " + ", ".join(skipped_no_url)
+                )
+
+            fix_manual_keywords = {}
+            if fix_mode == FIX_MODE_FULL:
+                missing_kw_keys = [k for k in selected_keys if not known_keywords.get(k)]
+                if missing_kw_keys:
+                    st.markdown("##### Podaj frazę kluczową (brak jej w wgranej paczce)")
+                    for k in missing_kw_keys:
+                        fix_manual_keywords[k] = st.text_input(f"Fraza dla `{k}`", key=f"fix_kw_{k}")
+
+            btn_label = "Przeregeneruj zaznaczone (E-E-A-T)" if fix_mode == FIX_MODE_EEAT else "Przeregeneruj zaznaczone (pełna analiza)"
+            if st.button(btn_label, type="primary", disabled=not selected_keys, use_container_width=True):
                 fix_errors = []
                 total_in, total_out, total_cost = 0, 0, 0.0
-                with st.spinner("Przeregenerowywanie E-E-A-T..."):
-                    for key in selected_keys:
-                        item = work_items[key]
-                        content = item["content"]
-                        if content is None and item["source"] == "fetch":
-                            data = fetch_url(key, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
-                            content, _, err = extract_jina_content(data)
-                            if err:
-                                fix_errors.append({"url": key, "reason": f"JINA: {err}"})
-                                continue
-                        if not content:
-                            fix_errors.append({"url": key, "reason": "Brak treści źródłowej — pominięto."})
-                            continue
-                        try:
-                            eeat_list, usage = eeat_patch.regenerate_eeat(
-                                content, fix_lang, fix_user_context, prompts["scoring"], selected_model,
-                            )
-                        except Exception as e:
-                            fix_errors.append({"url": key, "reason": f"OpenAI: {e}"})
-                            continue
-                        computed[key] = eeat_list
-                        total_in += usage.prompt_tokens
-                        total_out += usage.completion_tokens
-                        total_cost += calculate_cost(selected_model, usage.prompt_tokens, usage.completion_tokens)
-
                 output_files = {}
-                for name, rec in file_records.items():
-                    b, kind = rec["bytes"], rec["kind"]
-                    try:
-                        if kind == "xlsx_master":
-                            output_files[name] = eeat_patch.patch_master_xlsx(b, computed)
-                        elif kind == "html_master":
-                            output_files[name] = eeat_patch.patch_master_html(b, computed)
-                        elif kind == "xlsx_single":
-                            mapped = url_overrides.get(name, "")
-                            key = mapped if mapped else f"__standalone__{name}"
-                            output_files[name] = eeat_patch.patch_single_xlsx(b, computed[key]) if key in computed else b
-                        elif kind == "html_single":
-                            u = eeat_patch.extract_url_from_single_html(b)
-                            output_files[name] = eeat_patch.patch_single_html(b, computed[u]) if u in computed else b
-                        else:
+
+                if fix_mode == FIX_MODE_EEAT:
+                    computed = {}
+                    with st.spinner("Przeregenerowywanie E-E-A-T..."):
+                        for key in selected_keys:
+                            item = work_items[key]
+                            content = item["content"]
+                            if content is None and item["source"] == "fetch":
+                                data = fetch_url(key, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
+                                content, _, err = extract_jina_content(data)
+                                if err:
+                                    fix_errors.append({"url": key, "reason": f"JINA: {err}"})
+                                    continue
+                            if not content:
+                                fix_errors.append({"url": key, "reason": "Brak treści źródłowej — pominięto."})
+                                continue
+                            try:
+                                eeat_list, usage = eeat_patch.regenerate_eeat(
+                                    content, fix_lang, fix_user_context, prompts["scoring"], selected_model,
+                                )
+                            except Exception as e:
+                                fix_errors.append({"url": key, "reason": f"OpenAI: {e}"})
+                                continue
+                            computed[key] = eeat_list
+                            total_in += usage.prompt_tokens
+                            total_out += usage.completion_tokens
+                            total_cost += calculate_cost(selected_model, usage.prompt_tokens, usage.completion_tokens)
+
+                    for name, rec in file_records.items():
+                        b, kind = rec["bytes"], rec["kind"]
+                        try:
+                            if kind == "xlsx_master":
+                                output_files[name] = eeat_patch.patch_master_xlsx(b, computed)
+                            elif kind == "html_master":
+                                output_files[name] = eeat_patch.patch_master_html(b, computed)
+                            elif kind == "xlsx_single":
+                                mapped = url_overrides.get(name, "")
+                                key = mapped if mapped else f"__standalone__{name}"
+                                output_files[name] = eeat_patch.patch_single_xlsx(b, computed[key]) if key in computed else b
+                            elif kind == "html_single":
+                                u = eeat_patch.extract_url_from_single_html(b)
+                                output_files[name] = eeat_patch.patch_single_html(b, computed[u]) if u in computed else b
+                            else:
+                                output_files[name] = b
+                        except Exception as e:
+                            fix_errors.append({"url": name, "reason": f"Patchowanie pliku: {e}"})
                             output_files[name] = b
-                    except Exception as e:
-                        fix_errors.append({"url": name, "reason": f"Patchowanie pliku: {e}"})
-                        output_files[name] = b
+
+                else:  # FIX_MODE_FULL
+                    fix_hl, fix_gl = SERP_LOCALES[fix_serp_input]
+                    fresh_results = {}
+                    with st.spinner("Pełna ponowna analiza w toku (to może potrwać dłużej)..."):
+                        for key in selected_keys:
+                            keyword = known_keywords.get(key) or fix_manual_keywords.get(key, "")
+                            try:
+                                result = fetch_and_audit(
+                                    key, keyword, selected_model, prompts, fix_lang, fix_user_context,
+                                    hl=fix_hl, gl=fix_gl, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors,
+                                )
+                            except Exception as e:
+                                fix_errors.append({"url": key, "reason": str(e)})
+                                continue
+                            fresh_results[key] = result
+                            total_in += result["tokens_in"]
+                            total_out += result["tokens_out"]
+                            total_cost += result["cost"]
+                            if result["warnings"]:
+                                fix_errors.append({"url": key, "reason": "Nadal niepełne: " + "; ".join(result["warnings"])})
+
+                    def _theme_of(name, b):
+                        return eeat_patch.guess_theme_from_path(name, b)
+
+                    for name, rec in file_records.items():
+                        b, kind = rec["bytes"], rec["kind"]
+                        try:
+                            if kind == "xlsx_master":
+                                if fresh_results:
+                                    reconstructed = eeat_patch.reconstruct_results_from_master_xlsx(b)
+                                    merged = eeat_patch.merge_fresh_results_into_master(reconstructed, fresh_results)
+                                    output_files[name] = generate_master_excel_report(merged, theme_key=_theme_of(name, b))
+                                else:
+                                    output_files[name] = b
+                            elif kind == "html_master":
+                                theme = _theme_of(name, b)
+                                sibling = next(
+                                    (n for n, r in file_records.items()
+                                     if r["kind"] == "xlsx_master" and _theme_of(n, r["bytes"]) == theme),
+                                    None,
+                                )
+                                if fresh_results and sibling:
+                                    reconstructed = eeat_patch.reconstruct_results_from_master_xlsx(file_records[sibling]["bytes"])
+                                    merged = eeat_patch.merge_fresh_results_into_master(reconstructed, fresh_results)
+                                    output_files[name] = generate_master_html_report(merged, theme_key=theme)
+                                else:
+                                    output_files[name] = b
+                                    if fresh_results and not sibling:
+                                        fix_errors.append({
+                                            "url": name,
+                                            "reason": "Brak pasującego master XLSX tego samego brandingu w paczce — HTML pozostawiony bez zmian.",
+                                        })
+                            elif kind == "xlsx_single":
+                                mapped = url_overrides.get(name, "")
+                                if mapped in fresh_results:
+                                    fresh = fresh_results[mapped]
+                                    output_files[name] = generate_excel_report(
+                                        fresh["gap_analysis"], fresh["scores"], fresh["report"],
+                                        fresh["source_content"], fresh["consolidated_competitors"],
+                                        theme_key=_theme_of(name, b),
+                                    )
+                                else:
+                                    output_files[name] = b
+                            elif kind == "html_single":
+                                u = eeat_patch.extract_url_from_single_html(b)
+                                if u in fresh_results:
+                                    fresh = fresh_results[u]
+                                    output_files[name] = generate_single_html_report(
+                                        u, fresh["title"], fresh["keyword"], fresh["gap_analysis"], fresh["scores"], fresh["report"],
+                                        theme_key=_theme_of(name, b),
+                                    )
+                                else:
+                                    output_files[name] = b
+                            else:
+                                output_files[name] = b
+                        except Exception as e:
+                            fix_errors.append({"url": name, "reason": f"Przebudowa pliku: {e}"})
+                            output_files[name] = b
 
                 if fix_errors:
                     err_txt = "\n".join(f"{e['url']} — {e['reason']}" for e in fix_errors)

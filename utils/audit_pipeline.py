@@ -4,7 +4,7 @@ Kolejność kroków: SERP (Nodeshub) -> treści konkurentów (JINA batch)
 -> analiza luk EAV -> scoring -> raport końcowy (OpenAI).
 """
 
-from utils.jina_api import fetch_competitors_batch
+from utils.jina_api import fetch_competitors_batch, fetch_url
 from utils.nodeshub_api import search
 from utils.openai_llm import (
     GapAnalysisResult,
@@ -128,3 +128,44 @@ def run_audit(
         "cost": calculate_cost(model_name, total_in, total_out),
         "warnings": warnings,
     }
+
+
+def fetch_and_audit(
+    url: str,
+    keyword: str,
+    model_name: str,
+    prompts: dict,
+    language: str,
+    user_context: str = "",
+    hl: str = "pl",
+    gl: str = "pl",
+    remove_selector: str = None,
+    target_selector: str = None,
+) -> dict:
+    """Pobiera treść artykułu z URL-a (JINA) i uruchamia dla niej pełny audyt od zera.
+
+    Używane do (re)audytu całego adresu — zarówno przy automatycznej powtórce
+    nieudanych wierszy na końcu audytu masowego, jak i przy ręcznej "pełnej
+    ponownej analizie" konkretnego URL-a w zakładce Popraw raport.
+
+    Zwraca dict jak run_audit() rozszerzony o 'url', 'keyword', 'title', 'source_content'.
+    Rzuca ValueError z czytelnym powodem, jeśli pobranie treści się nie powiedzie.
+    """
+    data = fetch_url(url, remove_selector=remove_selector, target_selector=target_selector)
+    if not data or "error" in data:
+        raise ValueError(f"JINA: {data.get('error') if data else 'brak odpowiedzi'}")
+
+    content = data.get("data", {}).get("content", "")
+    title = data.get("data", {}).get("title", "") or "Raport Audytu AI"
+    if not content.strip():
+        raise ValueError("JINA zwróciła pustą treść.")
+
+    result = run_audit(
+        content, keyword, model_name, prompts, language, user_context,
+        hl=hl, gl=gl, remove_selector=remove_selector,
+    )
+    result["url"] = url
+    result["keyword"] = keyword
+    result["title"] = title
+    result["source_content"] = content
+    return result
