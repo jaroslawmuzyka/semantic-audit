@@ -741,7 +741,7 @@ with tab3:
             for key, item in sorted(work_items.items(), key=lambda kv: kv[1]["label"]):
                 checked = st.checkbox(
                     f"{item['label']}  —  _{source_labels[item['source']]}_",
-                    value=(item["source"] is not None), key=f"fix_sel_{key}",
+                    value=False, key=f"fix_sel_{key}",
                 )
                 if checked:
                     selected_keys.append(key)
