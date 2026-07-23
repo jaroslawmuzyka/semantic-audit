@@ -1,6 +1,7 @@
 import os
 import io
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import streamlit as st
 import pandas as pd
 
@@ -228,7 +229,7 @@ with st.sidebar:
         st.warning("Brakujące klucze API: " + ", ".join(missing_keys) + ". Uzupełnij `.streamlit/secrets.toml`.")
 
     selected_model = st.selectbox("Model OpenAI", AVAILABLE_MODELS, index=0)
-    jina_remove_selectors = st.text_input("Usuń selektory przed analizą (JINA)", value=".cky-consent-container")
+    jina_remove_selectors = st.text_input("Usuń selektory przed analizą (JINA)", value='[class*="cky-"], footer')
     jina_target_selectors = st.text_input("Celuj w selektory w JINA (X-Target-Selector)", value="", placeholder="np. body, .class, #id")
 
     with st.expander("Edytuj Prompty Systemowe", expanded=False):
@@ -444,13 +445,21 @@ with tab2:
     st.subheader("Import Masowy z pliku Excel")
     st.markdown("Wgraj plik z kolumnami: `URL`, `Fraza` (opcjonalnie), `Title` (opcjonalnie).")
 
-    col_s1, col_s2, col_s3 = st.columns(3)
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
     with col_s1:
         mass_serp_input = st.selectbox("Ustawienia SERP (Masowo)", list(SERP_LOCALES.keys()), index=0)
     with col_s2:
         mass_lang_input = st.selectbox("Język audytu (Masowo)", ["Polski", "English", "Deutsch"], index=0)
     with col_s3:
         mass_manual_review = st.checkbox("Zatwierdzanie manualne po JINA", value=False)
+    with col_s4:
+        mass_concurrency = st.slider(
+            "Równoległe wątki", min_value=1, max_value=10, value=1, disabled=mass_manual_review,
+            help="Ile adresów przetwarzać jednocześnie. Każdy wątek dodatkowo pobiera do 5 konkurentów "
+                 "równolegle, więc przy np. 5 wątkach realny szczyt zapytań do JINA to ~30 naraz — "
+                 "zwiększaj stopniowo i obserwuj, czy nie pojawiają się błędy 429. Nieaktywne przy "
+                 "zatwierdzaniu manualnym (tam zawsze 1 adres na raz).",
+        )
 
     mass_user_context = st.text_area("Dodatkowy kontekst dla wszystkich URLi", height=100)
     mass_hl, mass_gl = SERP_LOCALES[mass_serp_input]
@@ -556,8 +565,6 @@ with tab2:
                 st.markdown(f"- `{w['url']}` — {w['reason']}")
 
     if st.session_state.mass_step == 1:
-        # Maszyna stanów: jeden wiersz na jeden przebieg skryptu (odporne na rerun,
-        # brak duplikatów przy przerwaniu, działa dla trybu manualnego i automatycznego).
         df = st.session_state.mass_df
         n_rows = len(df)
         idx = st.session_state.mass_idx
@@ -574,30 +581,33 @@ with tab2:
 
         st.progress(min(idx / n_rows, 1.0) if n_rows else 0.0, text=f"Postęp audytu: {idx}/{n_rows}")
 
-        row = df.iloc[idx]
-        url = normalize_cell(row.get("URL", ""))
-        keyword = normalize_cell(row.get("Fraza", ""))
+        if mass_manual_review:
+            # Tryb manualny: maszyna stanów jeden wiersz na jeden przebieg skryptu
+            # (odporne na rerun, brak duplikatów przy przerwaniu) — zawsze 1 adres na raz,
+            # żeby dało się obejrzeć i zatwierdzić/pominąć treść przed analizą.
+            row = df.iloc[idx]
+            url = normalize_cell(row.get("URL", ""))
+            keyword = normalize_cell(row.get("Fraza", ""))
 
-        if not url:
-            st.session_state.mass_idx += 1
-            st.rerun()
-
-        st.write(f"### Przetwarzanie wiersza {idx+1}/{n_rows}: {url}")
-
-        if st.session_state.mass_jina_content is None:
-            with st.spinner(f"Pobieranie JINA: {url}"):
-                source_data = fetch_url(url, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
-            content, title, err = extract_jina_content(source_data)
-            if err:
-                st.error(f"Nie udało się pobrać treści dla {url}: {err}. Pomijam.")
-                st.session_state.mass_errors.append({"url": url, "reason": f"JINA: {err}"})
-                st.session_state.mass_jina_content = None
+            if not url:
                 st.session_state.mass_idx += 1
                 st.rerun()
-            st.session_state.mass_jina_content = content
-            st.session_state.mass_jina_title = title
 
-        if mass_manual_review:
+            st.write(f"### Przetwarzanie wiersza {idx+1}/{n_rows}: {url}")
+
+            if st.session_state.mass_jina_content is None:
+                with st.spinner(f"Pobieranie JINA: {url}"):
+                    source_data = fetch_url(url, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
+                content, title, err = extract_jina_content(source_data)
+                if err:
+                    st.error(f"Nie udało się pobrać treści dla {url}: {err}. Pomijam.")
+                    st.session_state.mass_errors.append({"url": url, "reason": f"JINA: {err}"})
+                    st.session_state.mass_jina_content = None
+                    st.session_state.mass_idx += 1
+                    st.rerun()
+                st.session_state.mass_jina_content = content
+                st.session_state.mass_jina_title = title
+
             with st.expander(f"Pobrana treść JINA ({url})", expanded=True):
                 st.markdown(st.session_state.mass_jina_content)
 
@@ -613,23 +623,98 @@ with tab2:
             if not approved:
                 st.stop()  # czekamy na decyzję użytkownika
 
-        with st.spinner(f"Analiza w toku ({url}): SERP, Gap, Scoring, Report..."):
-            try:
-                process_mass_row(
-                    url, keyword,
-                    st.session_state.mass_jina_title or "Raport Audytu AI",
-                    st.session_state.mass_jina_content,
-                    selected_model, prompts, mass_lang_input, mass_user_context,
-                    mass_hl, mass_gl, jina_remove_selectors, serp_provider,
-                )
-            except Exception as e:
-                st.error(f"Błąd przy analizie {url}: {e}")
-                st.session_state.mass_errors.append({"url": url, "reason": str(e)})
+            with st.spinner(f"Analiza w toku ({url}): SERP, Gap, Scoring, Report..."):
+                try:
+                    process_mass_row(
+                        url, keyword,
+                        st.session_state.mass_jina_title or "Raport Audytu AI",
+                        st.session_state.mass_jina_content,
+                        selected_model, prompts, mass_lang_input, mass_user_context,
+                        mass_hl, mass_gl, jina_remove_selectors, serp_provider,
+                    )
+                except Exception as e:
+                    st.error(f"Błąd przy analizie {url}: {e}")
+                    st.session_state.mass_errors.append({"url": url, "reason": str(e)})
 
-        st.session_state.mass_jina_content = None
-        st.session_state.mass_jina_title = None
-        st.session_state.mass_idx += 1
-        st.rerun()
+            st.session_state.mass_jina_content = None
+            st.session_state.mass_jina_title = None
+            st.session_state.mass_idx += 1
+            st.rerun()
+
+        else:
+            # Tryb automatyczny: do mass_concurrency adresów naraz. Same wywołania
+            # sieciowe/LLM (fetch_and_audit) lecą w wątkach — nic z tego nie woła st.*
+            # ani nie rusza session_state. Dopiero PO zebraniu wyników z całej paczki
+            # wracamy na główny wątek i tam (bezpiecznie, w kolejności wierszy)
+            # aktualizujemy UI i session_state.
+            batch = []
+            scan_idx = idx
+            while scan_idx < n_rows and len(batch) < mass_concurrency:
+                row = df.iloc[scan_idx]
+                url = normalize_cell(row.get("URL", ""))
+                keyword = normalize_cell(row.get("Fraza", ""))
+                if url:
+                    batch.append((scan_idx, url, keyword))
+                scan_idx += 1
+
+            if not batch:
+                st.session_state.mass_idx = scan_idx
+                st.rerun()
+
+            st.write(f"### Przetwarzanie wierszy {idx + 1}–{scan_idx}/{n_rows} (równolegle: {len(batch)})")
+
+            batch_results = {}
+            with st.spinner(f"Analiza w toku ({len(batch)} adres(y/ów) równolegle): SERP, Gap, Scoring, Report..."):
+                with ThreadPoolExecutor(max_workers=len(batch)) as executor:
+                    future_map = {
+                        executor.submit(
+                            fetch_and_audit, url, keyword, selected_model, prompts, mass_lang_input, mass_user_context,
+                            hl=mass_hl, gl=mass_gl, remove_selector=jina_remove_selectors,
+                            target_selector=jina_target_selectors, serp_provider=serp_provider,
+                        ): (row_idx, url, keyword)
+                        for row_idx, url, keyword in batch
+                    }
+                    for future in as_completed(future_map):
+                        row_idx, url, keyword = future_map[future]
+                        try:
+                            batch_results[row_idx] = ("ok", future.result())
+                        except Exception as e:
+                            batch_results[row_idx] = ("error", str(e))
+
+            for row_idx, url, keyword in batch:
+                status, payload = batch_results[row_idx]
+                if status == "error":
+                    st.error(f"Błąd przy analizie {url}: {payload}")
+                    st.session_state.mass_errors.append({"url": url, "reason": payload})
+                    continue
+
+                result = payload
+                for w in result["warnings"]:
+                    st.warning(f"{url}: {w}")
+                    st.session_state.mass_warnings.append({"url": url, "reason": w})
+
+                safe_url = safe_filename(url)
+                for tk in THEME_KEYS:
+                    st.session_state.mass_files[f"{tk}/analiza indywidualna/audit_{safe_url}.xlsx"] = generate_excel_report(
+                        result["gap_analysis"], result["scores"], result["report"],
+                        result["source_content"], result["consolidated_competitors"], theme_key=tk,
+                    )
+                    st.session_state.mass_files[f"{tk}/analiza indywidualna/audit_{safe_url}.html"] = generate_single_html_report(
+                        url, result["title"], keyword, result["gap_analysis"], result["scores"], result["report"], theme_key=tk,
+                    )
+
+                st.session_state.mass_results.append({
+                    "url": url, "keyword": keyword, "report": result["report"], "scores": result["scores"],
+                    "gap_analysis": result["gap_analysis"], "tokens_in": result["tokens_in"],
+                    "tokens_out": result["tokens_out"], "cost": result["cost"],
+                })
+                st.session_state.total_tokens["in"] += result["tokens_in"]
+                st.session_state.total_tokens["out"] += result["tokens_out"]
+                st.session_state.total_cost += result["cost"]
+
+            rebuild_mass_archives()
+            st.session_state.mass_idx = scan_idx
+            st.rerun()
 
     if st.session_state.mass_step == 3:
         # Druga runda: adresy, które za pierwszym razem dostały niepełny raport

@@ -178,11 +178,20 @@ def process_single_url(url, clean=True, remove_selector=None, target_selector=No
         "status": status
     }
 
+# Zawsze odcinane u konkurencji (nawigacja/stopka nigdy nie niosą treści merytorycznej,
+# a zaśmiecają EAV/gap-analysis) — niezależnie od tego, co użytkownik ustawił w panelu
+# dla WŁASNEGO artykułu. Nie dotyczy fetch_url() używanego dla własnej treści.
+COMPETITOR_ALWAYS_REMOVE_SELECTOR = "nav, footer"
+
+
 def fetch_competitors_batch(urls, max_words_per_competitor=1500, max_workers=5, remove_selector=None, target_selector=None):
+    combined_remove_selector = ", ".join(
+        s for s in (remove_selector, COMPETITOR_ALWAYS_REMOVE_SELECTOR) if s
+    )
     results = []
-    
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(process_single_url, url, True, remove_selector, target_selector): url for url in urls}
+        futures = {executor.submit(process_single_url, url, True, combined_remove_selector, target_selector): url for url in urls}
         for future in as_completed(futures):
             try:
                 results.append(future.result())
