@@ -113,10 +113,10 @@ def rebuild_mass_archives():
     st.session_state.mass_zip = create_zip_archive(zip_files)
 
 
-def process_mass_row(url, keyword, title, source_content, model, prompts, language, user_context, hl, gl, remove_selector):
+def process_mass_row(url, keyword, title, source_content, model, prompts, language, user_context, hl, gl, remove_selector, serp_provider):
     result = run_audit(
         source_content, keyword, model, prompts, language, user_context,
-        hl=hl, gl=gl, remove_selector=remove_selector,
+        hl=hl, gl=gl, remove_selector=remove_selector, serp_provider=serp_provider,
     )
     for w in result["warnings"]:
         st.warning(f"{url}: {w}")
@@ -216,7 +216,14 @@ st.markdown("Audyt semantyczny treści za pomocą Jina, Nodeshub i OpenAI.")
 with st.sidebar:
     st.header("Ustawienia zaawansowane")
 
-    missing_keys = [k for k in ("OPENAI_API_KEY", "JINA_API_KEY", "NODESHUB_API_KEY") if not _get_secret(k)]
+    serp_provider = st.selectbox("Dostawca danych SERP", ["Nodeshub", "Data4SEO"], index=0)
+
+    required_keys = ["OPENAI_API_KEY", "JINA_API_KEY"]
+    if serp_provider == "Nodeshub":
+        required_keys.append("NODESHUB_API_KEY")
+    else:
+        required_keys += ["DATA4SEO_LOGIN", "DATA4SEO_PASSWORD"]
+    missing_keys = [k for k in required_keys if not _get_secret(k)]
     if missing_keys:
         st.warning("Brakujące klucze API: " + ", ".join(missing_keys) + ". Uzupełnij `.streamlit/secrets.toml`.")
 
@@ -361,7 +368,7 @@ with tab1:
                 result = run_audit(
                     source_content, keyword_input, selected_model, prompts,
                     language_name, user_context_input,
-                    hl=hl, gl=gl, remove_selector=jina_remove_selectors,
+                    hl=hl, gl=gl, remove_selector=jina_remove_selectors, serp_provider=serp_provider,
                 )
                 for w in result["warnings"]:
                     st.warning(w)
@@ -613,7 +620,7 @@ with tab2:
                     st.session_state.mass_jina_title or "Raport Audytu AI",
                     st.session_state.mass_jina_content,
                     selected_model, prompts, mass_lang_input, mass_user_context,
-                    mass_hl, mass_gl, jina_remove_selectors,
+                    mass_hl, mass_gl, jina_remove_selectors, serp_provider,
                 )
             except Exception as e:
                 st.error(f"Błąd przy analizie {url}: {e}")
@@ -646,6 +653,7 @@ with tab2:
                 result = fetch_and_audit(
                     url, keyword, selected_model, prompts, mass_lang_input, mass_user_context,
                     hl=mass_hl, gl=mass_gl, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors,
+                    serp_provider=serp_provider,
                 )
             except Exception as e:
                 st.warning(f"Ponowna próba nadal nieudana dla {url}: {e}")
@@ -955,6 +963,7 @@ with tab3:
                                 result = fetch_and_audit(
                                     key, keyword, selected_model, prompts, fix_lang, fix_user_context,
                                     hl=fix_hl, gl=fix_gl, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors,
+                                    serp_provider=serp_provider,
                                 )
                             except Exception as e:
                                 fix_errors.append({"url": key, "reason": str(e)})

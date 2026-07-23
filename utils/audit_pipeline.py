@@ -1,11 +1,12 @@
 """Wspólny pipeline audytu używany przez audyt pojedynczy i masowy.
 
-Kolejność kroków: SERP (Nodeshub) -> treści konkurentów (JINA batch)
+Kolejność kroków: SERP (Nodeshub albo Data4SEO) -> treści konkurentów (JINA batch)
 -> analiza luk EAV -> scoring -> raport końcowy (OpenAI).
 """
 
 from utils.jina_api import fetch_competitors_batch, fetch_url
-from utils.nodeshub_api import search
+from utils.nodeshub_api import search as nodeshub_search
+from utils.data4seo_api import search as data4seo_search
 from utils.openai_llm import (
     GapAnalysisResult,
     analyze_competitor_gaps,
@@ -17,6 +18,13 @@ SERP_LOCALES = {
     "Polska (PL)": ("pl", "pl"),
     "USA (EN)": ("en", "us"),
     "Niemcy (DE)": ("de", "de"),
+}
+
+# Dostawcy danych SERP — ten sam interfejs search(keyword, hl, gl), więc podstawienie
+# jest tylko wyborem funkcji. Nodeshub pozostaje domyślny i działa bez zmian.
+SERP_PROVIDERS = {
+    "Nodeshub": nodeshub_search,
+    "Data4SEO": data4seo_search,
 }
 
 MODEL_PRICING = {
@@ -53,11 +61,13 @@ def run_audit(
     gl: str = "pl",
     remove_selector: str = None,
     on_progress=None,
+    serp_provider: str = "Nodeshub",
 ) -> dict:
     """Uruchamia pełny audyt dla pojedynczej treści.
 
     prompts: dict z kluczami "gap", "scoring", "report".
     on_progress: opcjonalny callback(etap: str) do aktualizacji UI.
+    serp_provider: klucz z SERP_PROVIDERS ("Nodeshub" domyślnie, albo "Data4SEO").
     Zwraca dict z wynikami, licznikami tokenów i listą ostrzeżeń.
     """
 
@@ -72,10 +82,11 @@ def run_audit(
 
     if keyword and keyword.strip():
         notify("Krok 2: Pobieranie wyników SERP...")
-        serp_data = search(keyword, hl=hl, gl=gl)
+        serp_fn = SERP_PROVIDERS.get(serp_provider, nodeshub_search)
+        serp_data = serp_fn(keyword, hl=hl, gl=gl)
         if "error" in serp_data:
             warnings.append(
-                f"Nodeshub SERP: {serp_data['error']} — audyt bez analizy konkurencji."
+                f"{serp_provider} SERP: {serp_data['error']} — audyt bez analizy konkurencji."
             )
         else:
             competitor_urls = serp_data.get("urls", [])
@@ -141,6 +152,7 @@ def fetch_and_audit(
     gl: str = "pl",
     remove_selector: str = None,
     target_selector: str = None,
+    serp_provider: str = "Nodeshub",
 ) -> dict:
     """Pobiera treść artykułu z URL-a (JINA) i uruchamia dla niej pełny audyt od zera.
 
@@ -162,7 +174,7 @@ def fetch_and_audit(
 
     result = run_audit(
         content, keyword, model_name, prompts, language, user_context,
-        hl=hl, gl=gl, remove_selector=remove_selector,
+        hl=hl, gl=gl, remove_selector=remove_selector, serp_provider=serp_provider,
     )
     result["url"] = url
     result["keyword"] = keyword
