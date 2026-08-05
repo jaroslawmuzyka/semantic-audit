@@ -1,4 +1,4 @@
-streamlit>=1.37,<2
+streamlit==1.55.0
 openai>=1.99,<3
 requests>=2.31,<3
 pandas>=2.0,<3
