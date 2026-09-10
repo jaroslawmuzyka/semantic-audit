@@ -90,28 +90,40 @@ _EXAMPLE_MIME = {
 }
 
 
+_EXAMPLE_PLACEHOLDERS = [
+    "Przykładowy raport: Audyt jednego adresu URL",
+    "Przykładowy raport: Audyt masowy",
+    "Przykładowy raport: Popraw raport",
+]
+
+
 def render_example_downloads():
     """Renderuje przyciski do przykładowych plików wynikowych z examples/, jeśli tam są.
-    Nic nie pokazuje, dopóki katalog jest pusty/nie istnieje — bezpieczne do wywołania zawsze."""
+    Dopóki katalog jest pusty, pokazuje nieaktywne (na razie) przyciski-placeholdery zamiast
+    prawdziwych plików — same znikną, gdy tylko realne pliki wylądują w examples/."""
     example_dir = os.path.join(os.path.dirname(__file__), "examples")
-    if not os.path.isdir(example_dir):
-        return
-    files = sorted(
-        f for f in os.listdir(example_dir)
-        if os.path.isfile(os.path.join(example_dir, f)) and not f.startswith(".") and f.lower() != "readme.md"
-    )
-    if not files:
-        return
-    st.markdown("### 📄 Przykładowe pliki wynikowe")
-    for fname in files:
-        ext = os.path.splitext(fname)[1].lower()
-        with open(os.path.join(example_dir, fname), "rb") as fh:
-            data = fh.read()
-        st.download_button(
-            f"Pobierz: {fname}", data=data, file_name=fname,
-            mime=_EXAMPLE_MIME.get(ext, "application/octet-stream"),
-            key=f"example_dl_{fname}", width="stretch",
+    files = []
+    if os.path.isdir(example_dir):
+        files = sorted(
+            f for f in os.listdir(example_dir)
+            if os.path.isfile(os.path.join(example_dir, f)) and not f.startswith(".") and f.lower() != "readme.md"
         )
+    st.markdown("### 📄 Przykładowe pliki wynikowe")
+    if files:
+        for fname in files:
+            ext = os.path.splitext(fname)[1].lower()
+            with open(os.path.join(example_dir, fname), "rb") as fh:
+                data = fh.read()
+            st.download_button(
+                f"Pobierz: {fname}", data=data, file_name=fname,
+                mime=_EXAMPLE_MIME.get(ext, "application/octet-stream"),
+                key=f"example_dl_{fname}", width="stretch",
+            )
+    else:
+        # Placeholdery — na razie nic nie robią po kliknięciu. Wystarczy wrzucić realne pliki
+        # do examples/, żeby powyższa gałąź automatycznie zamieniła je na prawdziwe download_button.
+        for label in _EXAMPLE_PLACEHOLDERS:
+            st.button(label, key=f"example_placeholder_{label}", width="stretch")
 
 
 def rebuild_mass_archives():
@@ -234,7 +246,7 @@ for key, default in _DEFAULT_STATE.items():
         st.session_state[key] = default
 
 # Aktualizacja pól JINA z pickera musi się wydarzyć TU — przed utworzeniem
-# widgetów text_input w zakładce Ustawienia (Streamlit nie pozwala zmieniać
+# widgetów text_input w sidebarze (Streamlit nie pozwala zmieniać
 # session_state[key] widgetu PO tym, jak widget o tym kluczu już powstał w tym
 # przebiegu skryptu — stąd wzorzec "zapisz pending -> st.rerun() -> zastosuj na
 # samej górze kolejnego przebiegu, zanim widget się utworzy").
@@ -302,6 +314,19 @@ with st.sidebar:
     )
     render_example_downloads()
 
+    st.divider()
+    st.markdown("### 🧹 Scraping treści (JINA)")
+    jina_remove_selectors = st.text_input("Usuń selektory przed analizą (JINA)", key="jina_remove_selectors_input")
+    jina_target_selectors = st.text_input(
+        "Celuj w selektory w JINA (X-Target-Selector)", key="jina_target_selectors_input",
+        placeholder="np. body, .class, #id",
+    )
+    st.caption(
+        "Dotyczy TYLKO Twojego własnego artykułu — dla konkurencji nawigacja i stopka są usuwane "
+        "zawsze automatycznie, niezależnie od tego pola. Widoczne z każdej zakładki, bo dotyczy "
+        "wszystkich audytów."
+    )
+
 tab1, tab2, tab3, tab_settings = st.tabs([
     "Audyt jednego adresu URL",
     "Audyt masowy (wiele adresów URL)",
@@ -330,55 +355,6 @@ with tab_settings:
         st.warning("Brakujące klucze API: " + ", ".join(missing_keys) + ". Uzupełnij `.streamlit/secrets.toml`.")
 
     selected_model = st.selectbox("Model OpenAI", AVAILABLE_MODELS, index=0)
-
-    st.divider()
-    st.markdown("#### Scraping treści (JINA)")
-    jina_remove_selectors = st.text_input("Usuń selektory przed analizą (JINA)", key="jina_remove_selectors_input")
-    jina_target_selectors = st.text_input(
-        "Celuj w selektory w JINA (X-Target-Selector)", key="jina_target_selectors_input",
-        placeholder="np. body, .class, #id",
-    )
-    st.caption(
-        "Dotyczy TYLKO Twojego własnego artykułu — dla konkurencji nawigacja i stopka są usuwane "
-        "zawsze automatycznie, niezależnie od tego pola."
-    )
-
-    with st.expander("🔍 Interaktywny podgląd i wybór selektorów", expanded=False):
-        st.caption(
-            "Pobiera podaną stronę i pokazuje ją w czytelnej, uproszczonej formie — z selektorami, które "
-            "masz wpisane powyżej, więc widzisz dokładnie to, co realnie trafi do analizy. Najedź na dowolny "
-            "fragment, żeby zobaczyć jego poziom w strukturze (okruszki na górze podglądu), kliknij żeby go "
-            "zaznaczyć, a potem „🚫 Wyklucz” albo „🎯 Celuj tylko w to” — selektor CSS dopisze się sam do pól powyżej."
-        )
-        picker_url = st.text_input("URL strony do podglądu", key="picker_url", placeholder="https://przyklad.pl/artykul")
-        if st.button("Pobierz podgląd", key="picker_fetch_btn"):
-            if picker_url:
-                with st.spinner("Pobieranie strony..."):
-                    _html_raw, _err = fetch_html_raw(picker_url)
-                if _err:
-                    st.error(f"Nie udało się pobrać strony: {_err}")
-                else:
-                    st.session_state.picker_html_cache[picker_url] = _html_raw
-                    st.session_state.picker_active_url = picker_url
-            else:
-                st.warning("Podaj URL do podglądu.")
-
-        _active_url = st.session_state.picker_active_url
-        if _active_url and _active_url in st.session_state.picker_html_cache:
-            _fragment = selector_picker.build_preview_fragment(
-                st.session_state.picker_html_cache[_active_url], jina_remove_selectors, jina_target_selectors,
-            )
-            if _fragment["truncated"]:
-                st.caption("⚠️ Strona jest bardzo duża — podgląd obejmuje tylko część jej struktury.")
-            _picker_result = selector_picker_component.render_picker(
-                _fragment["html"], key=f"picker_{safe_filename(_active_url)}",
-            )
-            if _picker_result and _picker_result.get("nonce") != st.session_state.picker_last_nonce:
-                st.session_state.picker_last_nonce = _picker_result["nonce"]
-                st.session_state._picker_pending = {
-                    "action": _picker_result["action"], "selector": _picker_result["selector"],
-                }
-                st.rerun()
 
     st.divider()
     st.markdown("#### Prompty systemowe")
@@ -429,6 +405,43 @@ with tab1:
         custom_markdown_input = st.text_area("Wklej treść w formacie Markdown", height=300)
     else:
         custom_markdown_input = ""
+
+    with st.expander("🔍 Interaktywny podgląd i wybór selektorów JINA", expanded=False):
+        st.caption(
+            "Pobiera podaną stronę i pokazuje ją w czytelnej, uproszczonej formie — z selektorami, które "
+            "masz wpisane w panelu bocznym, więc widzisz dokładnie to, co realnie trafi do analizy. Najedź na dowolny "
+            "fragment, żeby zobaczyć jego poziom w strukturze (okruszki na górze podglądu), kliknij żeby go "
+            "zaznaczyć, a potem „🚫 Wyklucz” albo „🎯 Celuj tylko w to” — selektor CSS dopisze się sam do pól w panelu bocznym."
+        )
+        picker_url = st.text_input("URL strony do podglądu", key="picker_url", placeholder="https://przyklad.pl/artykul")
+        if st.button("Pobierz podgląd", key="picker_fetch_btn"):
+            if picker_url:
+                with st.spinner("Pobieranie strony..."):
+                    _html_raw, _err = fetch_html_raw(picker_url)
+                if _err:
+                    st.error(f"Nie udało się pobrać strony: {_err}")
+                else:
+                    st.session_state.picker_html_cache[picker_url] = _html_raw
+                    st.session_state.picker_active_url = picker_url
+            else:
+                st.warning("Podaj URL do podglądu.")
+
+        _active_url = st.session_state.picker_active_url
+        if _active_url and _active_url in st.session_state.picker_html_cache:
+            _fragment = selector_picker.build_preview_fragment(
+                st.session_state.picker_html_cache[_active_url], jina_remove_selectors, jina_target_selectors,
+            )
+            if _fragment["truncated"]:
+                st.caption("⚠️ Strona jest bardzo duża — podgląd obejmuje tylko część jej struktury.")
+            _picker_result = selector_picker_component.render_picker(
+                _fragment["html"], key=f"picker_{safe_filename(_active_url)}",
+            )
+            if _picker_result and _picker_result.get("nonce") != st.session_state.picker_last_nonce:
+                st.session_state.picker_last_nonce = _picker_result["nonce"]
+                st.session_state._picker_pending = {
+                    "action": _picker_result["action"], "selector": _picker_result["selector"],
+                }
+                st.rerun()
 
     if st.session_state.audit_step == 0:
         c_krok1, c_test = st.columns([1, 1])
