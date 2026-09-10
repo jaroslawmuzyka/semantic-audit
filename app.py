@@ -47,6 +47,66 @@ def extract_jina_content(data):
     return content, title, None
 
 
+def render_jina_picker(jina_remove_selectors, jina_target_selectors, key_prefix):
+    """Ujednolicony blok „sprawdź i dopasuj treść przed analizą" — dokładnie ten sam
+    mechanizm w audycie pojedynczym i masowym, żeby zachowanie było spójne. key_prefix
+    odseparowuje stan obu instancji w session_state (obie zakładki wykonują swój kod w
+    każdym przebiegu skryptu niezależnie od tego, która jest aktualnie widoczna)."""
+    st.caption(
+        "Zanim rozpoczniesz analizę, sprawdź jaką treść zobaczy AI. Domyślnie ukrywana jest "
+        "nawigacja i stopka — warto dodatkowo wykluczyć np. linki do powiązanych wpisów i inne "
+        "zbędne fragmenty. Nie wiesz, jakiego selektora użyć? Najedź na element poniżej, kliknij, "
+        "żeby go zaznaczyć, a potem „🚫 Wyklucz” albo „🎯 Celuj tylko w to” — selektor CSS dopisze "
+        "się sam do pól w panelu bocznym."
+    )
+    cache_key, active_key, nonce_key = f"{key_prefix}_picker_html_cache", f"{key_prefix}_picker_active_url", f"{key_prefix}_picker_last_nonce"
+    st.session_state.setdefault(cache_key, {})
+    st.session_state.setdefault(active_key, None)
+    st.session_state.setdefault(nonce_key, None)
+
+    picker_url = st.text_input(
+        "URL strony do podglądu", key=f"{key_prefix}_picker_url", placeholder="https://przyklad.pl/artykul",
+    )
+    if st.button("Pobierz podgląd", key=f"{key_prefix}_picker_fetch_btn"):
+        if picker_url:
+            with st.spinner("Pobieranie strony..."):
+                _html_raw, _err = fetch_html_raw(picker_url)
+            if _err:
+                st.error(f"Nie udało się pobrać strony: {_err}")
+            else:
+                st.session_state[cache_key][picker_url] = _html_raw
+                st.session_state[active_key] = picker_url
+        else:
+            st.warning("Podaj URL do podglądu.")
+
+    _active_url = st.session_state[active_key]
+    if _active_url and _active_url in st.session_state[cache_key]:
+        _fragment = selector_picker.build_preview_fragment(
+            st.session_state[cache_key][_active_url], jina_remove_selectors, jina_target_selectors,
+        )
+        if _fragment["truncated"]:
+            st.caption("⚠️ Strona jest bardzo duża — podgląd obejmuje tylko część jej struktury.")
+        _picker_result = selector_picker_component.render_picker(
+            _fragment["html"], key=f"{key_prefix}_picker_{safe_filename(_active_url)}",
+        )
+        if _picker_result and _picker_result.get("nonce") != st.session_state[nonce_key]:
+            st.session_state[nonce_key] = _picker_result["nonce"]
+            st.session_state._picker_pending = {
+                "action": _picker_result["action"], "selector": _picker_result["selector"],
+            }
+            st.rerun()
+
+        with st.expander("Zobacz dokładny tekst, który trafi do AI (Markdown)", expanded=False):
+            if st.button("Pokaż finalny tekst", key=f"{key_prefix}_picker_markdown_btn"):
+                with st.spinner("Pobieranie JINA..."):
+                    data = fetch_url(_active_url, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
+                content, _, err = extract_jina_content(data)
+                if err:
+                    st.error(f"Nie udało się pobrać treści: {err}")
+                else:
+                    st.markdown(content)
+
+
 def build_report_files(url, title, keyword, source_content, result):
     """Generuje raporty XLSX i HTML we wszystkich motywach brandowych."""
     excel_by_theme, html_by_theme = {}, {}
@@ -235,10 +295,9 @@ _DEFAULT_STATE = {
     # Ustawienia JINA (klucze jawne, żeby dało się je programowo nadpisywać z pickera)
     "jina_remove_selectors_input": '[class*="cky-"], footer, nav',
     "jina_target_selectors_input": "",
-    # Interaktywny podgląd wyboru selektorów
-    "picker_html_cache": {},
-    "picker_active_url": None,
-    "picker_last_nonce": None,
+    # Interaktywny podgląd wyboru selektorów (stan per-instancja tworzony leniwie
+    # w render_jina_picker() — patrz tam) — ten klucz jest jedyny współdzielony,
+    # bo dotyczy jednej, globalnej pary pól selektorów w sidebarze.
     "_picker_pending": None,
 }
 for key, default in _DEFAULT_STATE.items():
@@ -323,8 +382,7 @@ with st.sidebar:
     )
     st.caption(
         "Dotyczy TYLKO Twojego własnego artykułu — dla konkurencji nawigacja i stopka są usuwane "
-        "zawsze automatycznie, niezależnie od tego pola. Widoczne z każdej zakładki, bo dotyczy "
-        "wszystkich audytów."
+        "zawsze automatycznie, niezależnie od tego pola."
     )
 
 tab1, tab2, tab3, tab_settings = st.tabs([
@@ -406,66 +464,11 @@ with tab1:
     else:
         custom_markdown_input = ""
 
-    with st.expander("🔍 Interaktywny podgląd i wybór selektorów JINA", expanded=False):
-        st.caption(
-            "Pobiera podaną stronę i pokazuje ją w czytelnej, uproszczonej formie — z selektorami, które "
-            "masz wpisane w panelu bocznym, więc widzisz dokładnie to, co realnie trafi do analizy. Najedź na dowolny "
-            "fragment, żeby zobaczyć jego poziom w strukturze (okruszki na górze podglądu), kliknij żeby go "
-            "zaznaczyć, a potem „🚫 Wyklucz” albo „🎯 Celuj tylko w to” — selektor CSS dopisze się sam do pól w panelu bocznym."
-        )
-        picker_url = st.text_input("URL strony do podglądu", key="picker_url", placeholder="https://przyklad.pl/artykul")
-        if st.button("Pobierz podgląd", key="picker_fetch_btn"):
-            if picker_url:
-                with st.spinner("Pobieranie strony..."):
-                    _html_raw, _err = fetch_html_raw(picker_url)
-                if _err:
-                    st.error(f"Nie udało się pobrać strony: {_err}")
-                else:
-                    st.session_state.picker_html_cache[picker_url] = _html_raw
-                    st.session_state.picker_active_url = picker_url
-            else:
-                st.warning("Podaj URL do podglądu.")
-
-        _active_url = st.session_state.picker_active_url
-        if _active_url and _active_url in st.session_state.picker_html_cache:
-            _fragment = selector_picker.build_preview_fragment(
-                st.session_state.picker_html_cache[_active_url], jina_remove_selectors, jina_target_selectors,
-            )
-            if _fragment["truncated"]:
-                st.caption("⚠️ Strona jest bardzo duża — podgląd obejmuje tylko część jej struktury.")
-            _picker_result = selector_picker_component.render_picker(
-                _fragment["html"], key=f"picker_{safe_filename(_active_url)}",
-            )
-            if _picker_result and _picker_result.get("nonce") != st.session_state.picker_last_nonce:
-                st.session_state.picker_last_nonce = _picker_result["nonce"]
-                st.session_state._picker_pending = {
-                    "action": _picker_result["action"], "selector": _picker_result["selector"],
-                }
-                st.rerun()
+    with st.expander("🔍 Sprawdź i dopasuj treść przed analizą", expanded=False):
+        render_jina_picker(jina_remove_selectors, jina_target_selectors, key_prefix="single")
 
     if st.session_state.audit_step == 0:
-        c_krok1, c_test = st.columns([1, 1])
-        with c_krok1:
-            btn_krok1 = st.button("Krok 1: Pobierz treść do analizy (JINA)", type="primary", width="stretch")
-        with c_test:
-            btn_test = st.button("Przetestuj JINA (Szybki Podgląd)", width="stretch")
-
-        if btn_test:
-            if input_mode == "Pobierz treść z URL":
-                if not url_input:
-                    st.error("Proszę podać URL artykułu.")
-                else:
-                    with st.spinner("Pobieranie JINA..."):
-                        data = fetch_url(url_input, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
-                    content, _, err = extract_jina_content(data)
-                    if err:
-                        st.error(f"Nie udało się pobrać treści: {err}")
-                    else:
-                        st.success("Pobrano poprawnie.")
-                        with st.expander("Podgląd JINA", expanded=True):
-                            st.markdown(content)
-            else:
-                st.info("Testowanie JINA dotyczy tylko pobierania z URL.")
+        btn_krok1 = st.button("Krok 1: Pobierz treść do analizy (JINA)", type="primary", width="stretch")
 
         if btn_krok1:
             if input_mode == "Pobierz treść z URL" and not url_input:
@@ -674,18 +677,8 @@ with tab2:
     elif has_valid_rows:
         st.success(f"{len(_valid_urls)} poprawnych adresów gotowych do audytu.")
 
-    with st.expander("Przetestuj JINA na adresie (Podgląd)", expanded=False):
-        test_url = st.text_input("Podaj adres URL do testu", key="mass_test_url")
-        if st.button("Przetestuj URL", key="btn_test_mass_jina"):
-            if test_url:
-                with st.spinner("Pobieranie JINA..."):
-                    data = fetch_url(test_url, remove_selector=jina_remove_selectors, target_selector=jina_target_selectors)
-                content, _, err = extract_jina_content(data)
-                if err:
-                    st.error(f"Błąd pobierania: {err}")
-                else:
-                    st.success("Pobrano poprawnie.")
-                    st.markdown(content)
+    with st.expander("🔍 Sprawdź i dopasuj treść przed analizą", expanded=False):
+        render_jina_picker(jina_remove_selectors, jina_target_selectors, key_prefix="mass")
 
     col_btn1, col_btn2 = st.columns([1, 2])
     with col_btn1:
