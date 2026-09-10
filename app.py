@@ -5,7 +5,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import streamlit as st
 import pandas as pd
 
-from utils.jina_api import fetch_url
+from utils.jina_api import fetch_url, fetch_html_raw
+from utils import selector_picker
+from utils import selector_picker_component
 from utils.openai_llm import generate_keyword_from_url
 from utils.audit_pipeline import run_audit, fetch_and_audit, SERP_LOCALES, AVAILABLE_MODELS, calculate_cost
 from utils.excel_generator import generate_excel_report, generate_master_excel_report, create_zip_archive
@@ -70,14 +72,46 @@ def render_branded_downloads(excel_by_theme, html_by_theme, prefix="audit_report
                 f"Pobierz XLSX ({tk})", data=excel_by_theme[tk],
                 file_name=f"{prefix}_{tk.lower()}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True, key=f"dl_xlsx_{prefix}_{tk}",
+                width="stretch", key=f"dl_xlsx_{prefix}_{tk}",
             )
             st.download_button(
                 f"Pobierz HTML ({tk})", data=html_by_theme[tk],
                 file_name=f"{prefix}_{tk.lower()}.html",
                 mime="text/html",
-                use_container_width=True, key=f"dl_html_{prefix}_{tk}",
+                width="stretch", key=f"dl_html_{prefix}_{tk}",
             )
+
+
+_EXAMPLE_MIME = {
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".html": "text/html",
+    ".zip": "application/zip",
+    ".pdf": "application/pdf",
+}
+
+
+def render_example_downloads():
+    """Renderuje przyciski do przykładowych plików wynikowych z examples/, jeśli tam są.
+    Nic nie pokazuje, dopóki katalog jest pusty/nie istnieje — bezpieczne do wywołania zawsze."""
+    example_dir = os.path.join(os.path.dirname(__file__), "examples")
+    if not os.path.isdir(example_dir):
+        return
+    files = sorted(
+        f for f in os.listdir(example_dir)
+        if os.path.isfile(os.path.join(example_dir, f)) and not f.startswith(".") and f.lower() != "readme.md"
+    )
+    if not files:
+        return
+    st.markdown("### 📄 Przykładowe pliki wynikowe")
+    for fname in files:
+        ext = os.path.splitext(fname)[1].lower()
+        with open(os.path.join(example_dir, fname), "rb") as fh:
+            data = fh.read()
+        st.download_button(
+            f"Pobierz: {fname}", data=data, file_name=fname,
+            mime=_EXAMPLE_MIME.get(ext, "application/octet-stream"),
+            key=f"example_dl_{fname}", width="stretch",
+        )
 
 
 def rebuild_mass_archives():
@@ -164,6 +198,7 @@ _DEFAULT_STATE = {
     "audit_step": 0,
     "source_content": "",
     "source_title": "Raport Audytu AI",
+    "source_prefix": "audit_report",
     # Audyt masowy
     "mass_df": None,
     "mass_step": 0,
@@ -185,10 +220,32 @@ _DEFAULT_STATE = {
     "fix_output_files": None,
     "fix_errors_result": [],
     "fix_cost_result": (0, 0, 0.0),
+    # Ustawienia JINA (klucze jawne, żeby dało się je programowo nadpisywać z pickera)
+    "jina_remove_selectors_input": '[class*="cky-"], footer, nav',
+    "jina_target_selectors_input": "",
+    # Interaktywny podgląd wyboru selektorów
+    "picker_html_cache": {},
+    "picker_active_url": None,
+    "picker_last_nonce": None,
+    "_picker_pending": None,
 }
 for key, default in _DEFAULT_STATE.items():
     if key not in st.session_state:
         st.session_state[key] = default
+
+# Aktualizacja pól JINA z pickera musi się wydarzyć TU — przed utworzeniem
+# widgetów text_input w zakładce Ustawienia (Streamlit nie pozwala zmieniać
+# session_state[key] widgetu PO tym, jak widget o tym kluczu już powstał w tym
+# przebiegu skryptu — stąd wzorzec "zapisz pending -> st.rerun() -> zastosuj na
+# samej górze kolejnego przebiegu, zanim widget się utworzy").
+if st.session_state.get("_picker_pending"):
+    _pending = st.session_state.pop("_picker_pending")
+    if _pending["action"] == "exclude":
+        st.session_state["jina_remove_selectors_input"] = selector_picker.merge_selector(
+            st.session_state.get("jina_remove_selectors_input", ""), _pending["selector"],
+        )
+    else:  # "target" — zastępuje, bo to jest jeden zakres do analizy, nie lista
+        st.session_state["jina_target_selectors_input"] = _pending["selector"]
 
 
 def reset_mass_state(clear_table=False):
@@ -210,14 +267,58 @@ def reset_mass_state(clear_table=False):
 
 
 st.title("📝 AI Content Auditor Pipeline")
-st.markdown("Audyt semantyczny treści za pomocą Jina, Nodeshub i OpenAI.")
+st.markdown("Audyt semantyczny treści z użyciem AI, danych SERP i automatycznego scrapingu treści.")
+
+with st.expander("ℹ️ Czym jest to narzędzie i jak z niego korzystać?", expanded=False):
+    st.markdown(
+        "**AI Content Auditor** sprawdza, jak dobrze artykuł radzi sobie w wynikach Google i w "
+        "odpowiedziach AI (ChatGPT, Google AI Overviews), i generuje gotowe do wdrożenia rekomendacje.\n\n"
+        "**Co robi:**\n"
+        "- Porównuje artykuł z top 10 konkurentów z wyników wyszukiwania (SERP) — sprawdza, jakich "
+        "tematów/faktów brakuje.\n"
+        "- Ocenia treść w 9 wymiarach (m.in. E-E-A-T, struktura, gęstość informacji) i liczy Content "
+        "Quality Score (CQS).\n"
+        "- Generuje gotowy raport (XLSX + HTML, branding PG i WPP) z konkretnymi poprawkami „przed/po”.\n\n"
+        "**4 zakładki:**\n"
+        "- **Audyt jednego adresu URL** — pojedynczy artykuł, wynik od razu na ekranie.\n"
+        "- **Audyt masowy** — cały arkusz adresów naraz, wynik jako ZIP z raportami zbiorczymi i "
+        "indywidualnymi.\n"
+        "- **Popraw raport** — wgraj już gotowe raporty i przeregeneruj/usuń tylko wybrane fragmenty, "
+        "bez odpalania wszystkiego od nowa.\n"
+        "- **⚙️ Ustawienia** — model AI, dostawca danych SERP, filtrowanie treści (JINA), własne prompty.\n\n"
+        "**Jak zacząć:** wybierz zakładkę odpowiadającą Twojemu zadaniu, uzupełnij pola oznaczone jako "
+        "wymagane (patrz podpowiedź na górze każdej zakładki) i kliknij główny przycisk."
+    )
 
 # ----------------------------- Sidebar -----------------------------
 
 with st.sidebar:
-    st.header("Ustawienia zaawansowane")
+    st.markdown("### 💰 Koszt sesji")
+    cost_placeholder = st.empty()
+    cost_placeholder.metric(
+        "Całkowity Koszt Sesji",
+        f"${st.session_state.total_cost:.4f}",
+        f"{st.session_state.total_tokens['in']} in / {st.session_state.total_tokens['out']} out",
+    )
+    render_example_downloads()
 
-    serp_provider = st.selectbox("Dostawca danych SERP", ["Nodeshub", "Data4SEO"], index=0)
+tab1, tab2, tab3, tab_settings = st.tabs([
+    "Audyt jednego adresu URL",
+    "Audyt masowy (wiele adresów URL)",
+    "Popraw raport",
+    "⚙️ Ustawienia",
+])
+
+# ----------------------------- Ustawienia -----------------------------
+
+with tab_settings:
+    st.info(
+        "👉 Te ustawienia dotyczą WSZYSTKICH audytów (pojedynczych, masowych i poprawek raportów). "
+        "Jeśli nie wiesz, co zmienić — zostaw wartości domyślne, są dobrze dobrane dla większości przypadków."
+    )
+
+    st.markdown("#### Model i dostawca danych SERP")
+    serp_provider = st.selectbox("Dostawca danych SERP", ["Data4SEO", "Nodeshub"], index=0)
 
     required_keys = ["OPENAI_API_KEY", "JINA_API_KEY"]
     if serp_provider == "Nodeshub":
@@ -229,9 +330,58 @@ with st.sidebar:
         st.warning("Brakujące klucze API: " + ", ".join(missing_keys) + ". Uzupełnij `.streamlit/secrets.toml`.")
 
     selected_model = st.selectbox("Model OpenAI", AVAILABLE_MODELS, index=0)
-    jina_remove_selectors = st.text_input("Usuń selektory przed analizą (JINA)", value='[class*="cky-"], footer')
-    jina_target_selectors = st.text_input("Celuj w selektory w JINA (X-Target-Selector)", value="", placeholder="np. body, .class, #id")
 
+    st.divider()
+    st.markdown("#### Scraping treści (JINA)")
+    jina_remove_selectors = st.text_input("Usuń selektory przed analizą (JINA)", key="jina_remove_selectors_input")
+    jina_target_selectors = st.text_input(
+        "Celuj w selektory w JINA (X-Target-Selector)", key="jina_target_selectors_input",
+        placeholder="np. body, .class, #id",
+    )
+    st.caption(
+        "Dotyczy TYLKO Twojego własnego artykułu — dla konkurencji nawigacja i stopka są usuwane "
+        "zawsze automatycznie, niezależnie od tego pola."
+    )
+
+    with st.expander("🔍 Interaktywny podgląd i wybór selektorów", expanded=False):
+        st.caption(
+            "Pobiera podaną stronę i pokazuje ją w czytelnej, uproszczonej formie — z selektorami, które "
+            "masz wpisane powyżej, więc widzisz dokładnie to, co realnie trafi do analizy. Najedź na dowolny "
+            "fragment, żeby zobaczyć jego poziom w strukturze (okruszki na górze podglądu), kliknij żeby go "
+            "zaznaczyć, a potem „🚫 Wyklucz” albo „🎯 Celuj tylko w to” — selektor CSS dopisze się sam do pól powyżej."
+        )
+        picker_url = st.text_input("URL strony do podglądu", key="picker_url", placeholder="https://przyklad.pl/artykul")
+        if st.button("Pobierz podgląd", key="picker_fetch_btn"):
+            if picker_url:
+                with st.spinner("Pobieranie strony..."):
+                    _html_raw, _err = fetch_html_raw(picker_url)
+                if _err:
+                    st.error(f"Nie udało się pobrać strony: {_err}")
+                else:
+                    st.session_state.picker_html_cache[picker_url] = _html_raw
+                    st.session_state.picker_active_url = picker_url
+            else:
+                st.warning("Podaj URL do podglądu.")
+
+        _active_url = st.session_state.picker_active_url
+        if _active_url and _active_url in st.session_state.picker_html_cache:
+            _fragment = selector_picker.build_preview_fragment(
+                st.session_state.picker_html_cache[_active_url], jina_remove_selectors, jina_target_selectors,
+            )
+            if _fragment["truncated"]:
+                st.caption("⚠️ Strona jest bardzo duża — podgląd obejmuje tylko część jej struktury.")
+            _picker_result = selector_picker_component.render_picker(
+                _fragment["html"], key=f"picker_{safe_filename(_active_url)}",
+            )
+            if _picker_result and _picker_result.get("nonce") != st.session_state.picker_last_nonce:
+                st.session_state.picker_last_nonce = _picker_result["nonce"]
+                st.session_state._picker_pending = {
+                    "action": _picker_result["action"], "selector": _picker_result["selector"],
+                }
+                st.rerun()
+
+    st.divider()
+    st.markdown("#### Prompty systemowe")
     with st.expander("Edytuj Prompty Systemowe", expanded=False):
         prompt_gap_analysis = st.text_area(
             "Krok 4: Analiza luk i konkurentów",
@@ -249,22 +399,17 @@ with st.sidebar:
             height=250
         )
 
-    st.divider()
-    st.markdown("### Koszty API")
-    cost_placeholder = st.empty()
-    cost_placeholder.metric(
-        "Całkowity Koszt Sesji",
-        f"${st.session_state.total_cost:.4f}",
-        f"{st.session_state.total_tokens['in']} in / {st.session_state.total_tokens['out']} out",
-    )
-
 prompts = {"gap": prompt_gap_analysis, "scoring": prompt_scoring, "report": prompt_report}
 
-tab1, tab2, tab3 = st.tabs(["Pojedynczy Audyt", "Audyt Masowy (Excel)", "🔄 Popraw raport (E-E-A-T)"])
-
-# ----------------------------- Pojedynczy Audyt -----------------------------
+# ----------------------------- Audyt jednego adresu URL -----------------------------
 
 with tab1:
+    st.info(
+        "👉 Wymagane: URL artykułu (albo wklejona treść Markdown) + fraza kluczowa (żeby dało się "
+        "porównać z konkurencją — bez niej audyt policzy tylko ocenę treści, bez analizy luk). Reszta "
+        "pól jest opcjonalna. Po kliknięciu „Krok 1” zobaczysz pobraną treść do zatwierdzenia, a po "
+        "zatwierdzeniu — pełny audyt i gotowe raporty do pobrania."
+    )
     col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
     with col1:
         url_input = st.text_input("URL artykułu do audytu", placeholder="https://twojadomena.pl/artykul")
@@ -288,9 +433,9 @@ with tab1:
     if st.session_state.audit_step == 0:
         c_krok1, c_test = st.columns([1, 1])
         with c_krok1:
-            btn_krok1 = st.button("Krok 1: Pobierz treść do analizy (JINA)", type="primary", use_container_width=True)
+            btn_krok1 = st.button("Krok 1: Pobierz treść do analizy (JINA)", type="primary", width="stretch")
         with c_test:
-            btn_test = st.button("Przetestuj JINA (Szybki Podgląd)", use_container_width=True)
+            btn_test = st.button("Przetestuj JINA (Szybki Podgląd)", width="stretch")
 
         if btn_test:
             if input_mode == "Pobierz treść z URL":
@@ -386,6 +531,7 @@ with tab1:
             st.session_state.audit_completed = True
             st.session_state.excel_bytes = excel_by_theme
             st.session_state.html_bytes = html_by_theme
+            st.session_state.source_prefix = f"audit_{safe_filename(final_url)}"
             st.session_state.report = result["report"]
             st.session_state.total_cost = result["cost"]
             st.session_state.total_tokens = {"in": result["tokens_in"], "out": result["tokens_out"]}
@@ -420,7 +566,7 @@ with tab1:
         st.write(report.executive_summary)
 
         st.markdown("### Pobierz raporty")
-        render_branded_downloads(st.session_state.excel_bytes, st.session_state.html_bytes)
+        render_branded_downloads(st.session_state.excel_bytes, st.session_state.html_bytes, prefix=st.session_state.source_prefix)
 
         with st.expander("Zobacz główne rekomendacje", expanded=True):
             for rec in report.recommendations:
@@ -443,6 +589,12 @@ with tab1:
 
 with tab2:
     st.subheader("Import Masowy z pliku Excel")
+    st.info(
+        "👉 Wgraj plik XLSX z kolumnami `URL` (wymagana) i `Fraza`/`Title` (opcjonalne) — albo uzupełnij "
+        "tabelę ręcznie poniżej. Brakujące frazy możesz dogenerować automatycznie przyciskiem „Wygeneruj "
+        "brakujące frazy (AI)”. Po kliknięciu „Rozpocznij Audyt Masowy” dostaniesz na końcu ZIP z raportami "
+        "indywidualnymi i zbiorczymi (branding PG + WPP)."
+    )
     st.markdown("Wgraj plik z kolumnami: `URL`, `Fraza` (opcjonalnie), `Title` (opcjonalnie).")
 
     col_s1, col_s2, col_s3, col_s4 = st.columns(4)
@@ -481,7 +633,33 @@ with tab2:
 
     st.markdown("### Tabela adresów (edytowalna)")
     st.caption("Kliknij dwukrotnie w komórkę, aby ją edytować. Użyj plusa (+) na dole tabeli, aby dodać nowy wiersz.")
-    st.session_state.mass_df = st.data_editor(st.session_state.mass_df, num_rows="dynamic", use_container_width=True)
+    st.session_state.mass_df = st.data_editor(st.session_state.mass_df, num_rows="dynamic", width="stretch")
+
+    # Walidacja PRZED startem — żeby błędy (puste/zduplikowane/niepoprawne URL-e) było widać
+    # od razu, zamiast dopiero w trakcie audytu.
+    _df = st.session_state.mass_df
+    _urls_raw = [normalize_cell(v) for v in _df.get("URL", [])] if len(_df) else []
+    _valid_urls = [u for u in _urls_raw if u]
+    _empty_count = len(_urls_raw) - len(_valid_urls)
+    _malformed = [u for u in _valid_urls if not u.lower().startswith(("http://", "https://"))]
+    _dupe_counts = pd.Series(_valid_urls).value_counts() if _valid_urls else pd.Series(dtype=int)
+    _duplicates = _dupe_counts[_dupe_counts > 1].index.tolist()
+    has_valid_rows = len(_valid_urls) > 0
+
+    _msgs = []
+    if _empty_count:
+        _msgs.append(f"{_empty_count} wiersz(y) bez URL-a (zostaną pominięte).")
+    if _malformed:
+        _msgs.append(f"{len(_malformed)} adres(y) bez `http://`/`https://` na początku — prawdopodobnie się nie pobiorą: " + ", ".join(_malformed[:5]) + ("..." if len(_malformed) > 5 else ""))
+    if _duplicates:
+        _msgs.append(f"{len(_duplicates)} zduplikowany(ch) adres(y) (przeanalizowane zostaną dwa razy): " + ", ".join(_duplicates[:5]) + ("..." if len(_duplicates) > 5 else ""))
+
+    if not has_valid_rows and len(_df):
+        st.warning("Brak poprawnych adresów URL w tabeli — uzupełnij przynajmniej jeden, żeby móc rozpocząć.")
+    elif _msgs:
+        st.warning("Sprawdź tabelę przed startem:\n" + "\n".join(f"- {m}" for m in _msgs))
+    elif has_valid_rows:
+        st.success(f"{len(_valid_urls)} poprawnych adresów gotowych do audytu.")
 
     with st.expander("Przetestuj JINA na adresie (Podgląd)", expanded=False):
         test_url = st.text_input("Podaj adres URL do testu", key="mass_test_url")
@@ -498,7 +676,7 @@ with tab2:
 
     col_btn1, col_btn2 = st.columns([1, 2])
     with col_btn1:
-        if st.button("Wygeneruj brakujące frazy (AI)", use_container_width=True):
+        if st.button("Wygeneruj brakujące frazy (AI)", width="stretch"):
             df = st.session_state.mass_df
             for idx, row in df.iterrows():
                 url = normalize_cell(row.get("URL"))
@@ -516,7 +694,7 @@ with tab2:
 
     with col_btn2:
         if st.session_state.mass_step == 0:
-            if st.button("Rozpocznij Audyt Masowy", type="primary", use_container_width=True):
+            if st.button("Rozpocznij Audyt Masowy", type="primary", width="stretch", disabled=not has_valid_rows):
                 reset_mass_state()
                 st.session_state.mass_step = 1
                 st.session_state.total_cost = 0.0
@@ -525,11 +703,12 @@ with tab2:
 
     if st.session_state.mass_results:
         st.success(f"Ukończono {len(st.session_state.mass_results)} analiz. Możesz pobrać dotychczasowe wyniki w każdej chwili.")
+        _mass_domain = st.session_state.mass_results[0]["url"].split('//')[-1].split('/')[0].replace("www.", "")
         if st.session_state.mass_zip:
             st.download_button(
                 "Pobierz paczkę ZIP (raporty w obu brandingach: PG + WPP)",
-                data=st.session_state.mass_zip, file_name="audyty_masowe.zip",
-                mime="application/zip", use_container_width=True,
+                data=st.session_state.mass_zip, file_name=f"audyty_masowe_{_mass_domain}.zip",
+                mime="application/zip", width="stretch",
             )
         master_cols = st.columns(len(THEME_KEYS))
         for col, tk in zip(master_cols, THEME_KEYS):
@@ -538,18 +717,18 @@ with tab2:
                 if st.session_state.mass_master and st.session_state.mass_master.get(tk):
                     st.download_button(
                         f"Master Excel ({tk})", data=st.session_state.mass_master[tk],
-                        file_name=f"master_report_{tk.lower()}.xlsx",
+                        file_name=f"master_report_{_mass_domain}_{tk.lower()}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True, key=f"dl_master_xlsx_{tk}",
+                        width="stretch", key=f"dl_master_xlsx_{tk}",
                     )
                 if st.session_state.mass_master_html and st.session_state.mass_master_html.get(tk):
                     st.download_button(
                         f"Master HTML ({tk})", data=st.session_state.mass_master_html[tk],
-                        file_name=f"master_report_{tk.lower()}.html",
+                        file_name=f"master_report_{_mass_domain}_{tk.lower()}.html",
                         mime="text/html",
-                        use_container_width=True, key=f"dl_master_html_{tk}",
+                        width="stretch", key=f"dl_master_html_{tk}",
                     )
-        if st.button("Zresetuj analizę masową", use_container_width=True):
+        if st.button("Zresetuj analizę masową", width="stretch"):
             reset_mass_state()
             st.rerun()
         st.divider()
@@ -797,11 +976,14 @@ with tab2:
 
 with tab3:
     st.subheader("Przeregeneruj wybrane wartości w już gotowych raportach")
+    st.info(
+        "👉 Wgraj pliki, które już masz z poprzedniego audytu (pojedyncze XLSX/HTML albo cały ZIP) — "
+        "nic nie trzeba rozpakowywać. Wybierz tryb poniżej i zaznacz, których adresów dotyczy. Oryginalne "
+        "pliki, które wgrywasz, nie są w żaden sposób modyfikowane — zawsze dostajesz nowy plik wynikowy."
+    )
     st.markdown(
         "Wgraj pliki wynikowe, które już masz (raporty **indywidualne** i/lub **masowe**, "
-        "**XLSX** i/lub **HTML**, dowolny branding PG/WPP). Zaznacz, dla których adresów chcesz "
-        "świeżą ocenę **Braki E-E-A-T**. Reszta każdego pliku (rekomendacje, EAV, formatowanie, "
-        "branding) zostaje bez zmian — modyfikowane są tylko sekcje/komórki E-E-A-T."
+        "**XLSX** i/lub **HTML**, dowolny branding PG/WPP)."
     )
 
     FIX_MODE_EEAT = "Tylko Braki E-E-A-T (szybkie)"
@@ -810,7 +992,13 @@ with tab3:
     fix_mode = st.radio(
         "Co przeregenerować?", [FIX_MODE_EEAT, FIX_MODE_FULL, FIX_MODE_DELETE], key="fix_mode", horizontal=True,
     )
-    if fix_mode == FIX_MODE_FULL:
+    if fix_mode == FIX_MODE_EEAT:
+        st.caption(
+            "Odświeża tylko ocenę E-E-A-T dla zaznaczonych adresów (reszta pliku — rekomendacje, EAV, "
+            "formatowanie, branding — zostaje bez zmian). Najszybszy i najtańszy tryb — użyj go, gdy "
+            "wcześniejsza ocena E-E-A-T wyszła niekompletna/niespójna, a reszta raportu jest OK."
+        )
+    elif fix_mode == FIX_MODE_FULL:
         st.caption(
             "Pełna reanaliza pobiera treść na nowo i uruchamia CAŁY audyt (SERP, konkurencja, EAV, scoring, "
             "raport) dla wybranych adresów — przydatne, gdy poprzednia próba skończyła się niepełnym raportem "
@@ -819,7 +1007,8 @@ with tab3:
     elif fix_mode == FIX_MODE_DELETE:
         st.caption(
             "Usuwa zaznaczone adresy z raportu masowego (wszystkie arkusze XLSX + sekcje HTML, oba brandingi) "
-            "i pomija ich pliki indywidualne w wyniku. Nie modyfikuje wgranych przez Ciebie oryginałów — dostajesz "
+            "i pomija ich pliki indywidualne w wyniku. Użyj, gdy chcesz po prostu wyciąć jakiś adres z raportu "
+            "(np. artykuł usunięty ze strony). Nie modyfikuje wgranych przez Ciebie oryginałów — dostajesz "
             "nowy plik/ZIP bez tych adresów. Bez wywołań AI/JINA."
         )
 
@@ -986,7 +1175,7 @@ with tab3:
                 FIX_MODE_FULL: "Przeregeneruj zaznaczone (pełna analiza)",
                 FIX_MODE_DELETE: "Usuń zaznaczone adresy z raportu",
             }
-            if st.button(btn_labels[fix_mode], type="primary", disabled=not selected_keys, use_container_width=True):
+            if st.button(btn_labels[fix_mode], type="primary", disabled=not selected_keys, width="stretch"):
                 fix_errors = []
                 total_in, total_out, total_cost = 0, 0, 0.0
                 output_files = {}
@@ -1191,8 +1380,8 @@ with tab3:
         st.metric("Koszt tej regeneracji", f"${t_cost:.4f}", f"{t_in} in / {t_out} out")
         st.download_button(
             "Pobierz poprawione pliki (ZIP)", data=st.session_state.fix_output_zip,
-            file_name="raporty_poprawione_eeat.zip", mime="application/zip",
-            use_container_width=True,
+            file_name="raporty_poprawione.zip", mime="application/zip",
+            width="stretch",
         )
         with st.expander("Pobierz pojedynczo"):
             for name, b in st.session_state.fix_output_files.items():

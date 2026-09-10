@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Selector Picker</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: #fff; }
+  #breadcrumb {
+    position: sticky; top: 0; z-index: 10; background: #f5f5f7; border-bottom: 1px solid #ddd;
+    padding: 8px 10px; font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 20px;
+  }
+  #breadcrumb .crumb { cursor: pointer; padding: 2px 6px; border-radius: 4px; background: #eaeaef; border: 1px solid #d5d5db; }
+  #breadcrumb .crumb:hover { background: #dbe4ff; }
+  #breadcrumb .crumb.active { background: #4f7cff; color: #fff; border-color: #4f7cff; }
+  #breadcrumb .sep { opacity: 0.4; }
+  #actions {
+    position: sticky; top: 37px; z-index: 10; background: #fff; border-bottom: 1px solid #eee;
+    padding: 8px 10px; display: flex; gap: 8px;
+  }
+  #actions button { padding: 6px 12px; border-radius: 6px; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: 13px; }
+  #actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #actions button.exclude { border-color: #e0556b; color: #b8283f; }
+  #actions button.target { border-color: #2f9e6e; color: #1f7a52; }
+  #content { padding: 14px 16px; max-height: 480px; overflow-y: auto; line-height: 1.6; font-size: 14px; color: #222; }
+  #content h1, #content h2, #content h3, #content h4 { font-weight: 700; margin: 0.8em 0 0.3em; }
+  #content p { margin: 0.5em 0; }
+  #content ul, #content ol { margin: 0.4em 0; padding-left: 1.4em; }
+  #content nav, #content footer, #content header, #content aside {
+    background: rgba(79,124,255,0.06); border: 1px dashed rgba(79,124,255,0.35); border-radius: 4px; padding: 4px 6px; margin: 4px 0;
+  }
+  .picker-hover { outline: 2px solid #f4b400 !important; outline-offset: -1px; background: rgba(244,180,0,0.14) !important; cursor: pointer; }
+  .picker-selected { outline: 2px solid #4f7cff !important; outline-offset: -1px; background: rgba(79,124,255,0.16) !important; }
+  #empty-msg { color: #888; font-size: 12px; }
+</style>
+</head>
+<body>
+  <div id="breadcrumb"><span id="empty-msg">Najedź na dowolny element podglądu poniżej — a kliknij, żeby go zaznaczyć.</span></div>
+  <div id="actions">
+    <button id="btn-exclude" class="exclude" disabled>🚫 Wyklucz zaznaczony poziom</button>
+    <button id="btn-target" class="target" disabled>🎯 Celuj tylko w zaznaczony poziom</button>
+  </div>
+  <div id="content"></div>
+
+<script>
+(function () {
+  var contentEl = document.getElementById("content");
+  var breadcrumbEl = document.getElementById("breadcrumb");
+  var btnExclude = document.getElementById("btn-exclude");
+  var btnTarget = document.getElementById("btn-target");
+
+  var selectedEl = null;
+  var hoveredEl = null;
+
+  function sendMessage(type, extra) {
+    var payload = Object.assign({ isStreamlitMessage: true, type: type }, extra || {});
+    window.parent.postMessage(payload, "*");
+  }
+
+  function setFrameHeight() {
+    sendMessage("streamlit:setFrameHeight", { height: document.documentElement.scrollHeight });
+  }
+
+  function clearClass(cls) {
+    var els = contentEl.querySelectorAll("." + cls);
+    for (var i = 0; i < els.length; i++) els[i].classList.remove(cls);
+  }
+
+  function ancestorChain(el) {
+    var chain = [];
+    var cur = el;
+    while (cur && cur !== contentEl) {
+      if (cur.hasAttribute && cur.hasAttribute("data-sel")) chain.push(cur);
+      cur = cur.parentElement;
+    }
+    return chain; // od najgłębszego do najwyższego
+  }
+
+  function renderBreadcrumb(chain, activeEl) {
+    breadcrumbEl.innerHTML = "";
+    if (!chain.length) {
+      var span = document.createElement("span");
+      span.id = "empty-msg";
+      span.textContent = "Najedź na dowolny element podglądu poniżej — a kliknij, żeby go zaznaczyć.";
+      breadcrumbEl.appendChild(span);
+      return;
+    }
+    var ordered = chain.slice().reverse(); // od najwyższego do najgłębszego — czyta się naturalnie
+    ordered.forEach(function (el, i) {
+      var crumb = document.createElement("span");
+      crumb.className = "crumb" + (el === activeEl ? " active" : "");
+      crumb.textContent = el.getAttribute("data-label") || el.tagName.toLowerCase();
+      crumb.title = el.getAttribute("data-sel") || "";
+      crumb.addEventListener("click", function () { selectElement(el); });
+      breadcrumbEl.appendChild(crumb);
+      if (i < ordered.length - 1) {
+        var sep = document.createElement("span");
+        sep.className = "sep";
+        sep.textContent = "›";
+        breadcrumbEl.appendChild(sep);
+      }
+    });
+  }
+
+  function selectElement(el) {
+    clearClass("picker-selected");
+    clearClass("picker-hover");
+    selectedEl = el;
+    el.classList.add("picker-selected");
+    renderBreadcrumb(ancestorChain(el), el);
+    btnExclude.disabled = false;
+    btnTarget.disabled = false;
+  }
+
+  contentEl.addEventListener("mousemove", function (e) {
+    var target = e.target.closest ? e.target.closest("[data-sel]") : null;
+    if (target === hoveredEl) return;
+    clearClass("picker-hover");
+    hoveredEl = target;
+    if (target && target !== selectedEl) target.classList.add("picker-hover");
+    if (!selectedEl) renderBreadcrumb(target ? ancestorChain(target) : [], target);
+  });
+
+  contentEl.addEventListener("mouseleave", function () {
+    clearClass("picker-hover");
+    hoveredEl = null;
+    if (!selectedEl) renderBreadcrumb([], null);
+  });
+
+  contentEl.addEventListener("click", function (e) {
+    var target = e.target.closest ? e.target.closest("[data-sel]") : null;
+    if (target) {
+      e.preventDefault();
+      selectElement(target);
+    }
+  });
+
+  function emitAction(action) {
+    if (!selectedEl) return;
+    sendMessage("streamlit:setComponentValue", {
+      value: {
+        selector: selectedEl.getAttribute("data-sel"),
+        action: action,
+        nonce: Date.now() + "-" + Math.random(),
+      },
+    });
+  }
+
+  btnExclude.addEventListener("click", function () { emitAction("exclude"); });
+  btnTarget.addEventListener("click", function () { emitAction("target"); });
+
+  window.addEventListener("message", function (event) {
+    var data = event.data;
+    if (!data || data.type !== "streamlit:render") return;
+    var args = data.args || {};
+    contentEl.innerHTML = args.html || "<p style='color:#888;padding:10px;'>Brak treści do podglądu.</p>";
+    selectedEl = null;
+    hoveredEl = null;
+    btnExclude.disabled = true;
+    btnTarget.disabled = true;
+    renderBreadcrumb([], null);
+    setTimeout(setFrameHeight, 50);
+  });
+
+  sendMessage("streamlit:componentReady", { apiVersion: 1 });
+  setFrameHeight();
+})();
+</script>
+</body>
+</html>

@@ -103,10 +103,10 @@ def truncate_content(content, max_words=1500):
 JINA_ENGINE_MODES = ["cf-browser-rendering", "browser", None]
 
 
-def _build_headers(engine, remove_selector, target_selector):
+def _build_headers(engine, remove_selector, target_selector, return_format="markdown"):
     headers = {
         "Accept": "application/json",
-        "X-Return-Format": "markdown",
+        "X-Return-Format": return_format,
         "X-Retain-Images": "none",
         "X-Timeout": "10",
     }
@@ -122,26 +122,22 @@ def _build_headers(engine, remove_selector, target_selector):
     return headers
 
 
-def fetch_url(url, max_retries=3, remove_selector=None, target_selector=None):
-    """Pobiera treść strony przez JINA Reader.
+def _fetch_with_engine_fallback(url, headers_fn, max_retries=3):
+    """Wspólny szkielet retry/fallback silników używany przez fetch_url() i fetch_html_raw().
 
-    Przy odpowiedzi innej niż 200 próbuje kolejno wszystkich trybów silnika
-    z JINA_ENGINE_MODES (część stron blokuje jeden tryb renderowania, a inny
-    już nie), zanim zgłosi ostateczny błąd.
-
-    Zwraca dict z odpowiedzią JINA, a przy niepowodzeniu dict {"error": "..."} z powodem.
+    headers_fn(engine) -> dict nagłówków dla danej próby.
     """
     request_url = f"{API_BASE}{url}"
     last_error = "Nieznany błąd"
 
     for engine in JINA_ENGINE_MODES:
-        headers = _build_headers(engine, remove_selector, target_selector)
+        headers = headers_fn(engine)
 
         for attempt in range(max_retries):
             try:
                 resp = requests.get(request_url, headers=headers, timeout=60)
                 if resp.status_code == 200:
-                    return resp.json()
+                    return resp.json(), None
                 elif resp.status_code == 429:
                     last_error = "HTTP 429 (rate limit)"
                     wait = 2 ** (attempt + 1)
@@ -154,7 +150,40 @@ def fetch_url(url, max_retries=3, remove_selector=None, target_selector=None):
                 if attempt < max_retries - 1:
                     time.sleep(2)
 
-    return {"error": last_error}
+    return None, last_error
+
+
+def fetch_url(url, max_retries=3, remove_selector=None, target_selector=None):
+    """Pobiera treść strony przez JINA Reader (markdown).
+
+    Przy odpowiedzi innej niż 200 próbuje kolejno wszystkich trybów silnika
+    z JINA_ENGINE_MODES (część stron blokuje jeden tryb renderowania, a inny
+    już nie), zanim zgłosi ostateczny błąd.
+
+    Zwraca dict z odpowiedzią JINA, a przy niepowodzeniu dict {"error": "..."} z powodem.
+    """
+    data, error = _fetch_with_engine_fallback(
+        url, lambda engine: _build_headers(engine, remove_selector, target_selector), max_retries,
+    )
+    return data if data is not None else {"error": error}
+
+
+def fetch_html_raw(url, max_retries=3):
+    """Pobiera SUROWY HTML strony (X-Return-Format: html), bez remove/target-selectora —
+    używane wyłącznie przez interaktywny podgląd wyboru selektorów (utils/selector_picker.py),
+    żeby móc filtrować/dopasowywać selektory lokalnie na pełnej, nietkniętej strukturze.
+
+    Zwraca (html_str, None) albo (None, "powód błędu").
+    """
+    data, error = _fetch_with_engine_fallback(
+        url, lambda engine: _build_headers(engine, None, None, return_format="html"), max_retries,
+    )
+    if data is None:
+        return None, error
+    html = data.get("data", {}).get("html") or data.get("data", {}).get("content")
+    if not html:
+        return None, "JINA zwróciła pustą odpowiedź HTML."
+    return html, None
 
 def process_single_url(url, clean=True, remove_selector=None, target_selector=None):
     data = fetch_url(url, remove_selector=remove_selector, target_selector=target_selector)
