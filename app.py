@@ -1,4 +1,5 @@
 import os
+import hmac
 import io
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -26,6 +27,36 @@ def _get_secret(name: str):
     except Exception:
         value = None
     return value or os.environ.get(name)
+
+
+def check_password() -> bool:
+    """Bramka hasłowa. Hasło pochodzi z Secrets (APP_PASSWORD) — w Streamlit Cloud:
+    Settings → Secrets, lokalnie: .streamlit/secrets.toml. Bez ustawionego hasła
+    aplikacja pozostaje zablokowana (fail closed)."""
+    if st.session_state.get("password_correct"):
+        return True
+
+    expected = _get_secret("APP_PASSWORD")
+    if not expected:
+        st.error("Brak skonfigurowanego hasła dostępu (APP_PASSWORD w Secrets).")
+        return False
+
+    entered = st.text_input("Podaj hasło dostępu:", type="password", key="password_input")
+    if entered:
+        if hmac.compare_digest(entered.encode("utf-8"), str(expected).encode("utf-8")):
+            st.session_state["password_correct"] = True
+            st.rerun()
+        else:
+            st.error("Nieprawidłowe hasło.")
+    st.caption(
+        "Dane potrzebne do zalogowania znajdują się w Monday. "
+        "Kontakt: jaroslaw.muzyka@performance-group.pl"
+    )
+    return False
+
+
+if not check_password():
+    st.stop()
 
 
 def normalize_cell(value) -> str:
